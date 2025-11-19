@@ -1,0 +1,7 @@
+# Datasets
+/COTA/
+*.zip
+*circuit-of-the-americas.zip
+
+# Environment variables
+.env
