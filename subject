@@ -1,0 +1,105 @@
+GR-Pilot: The AI Debrief Assistant (Geliştirilmiş)
+🏎️ Overview
+
+GR-Pilot, Circuit of the Americas telemetri verilerini kullanarak AI tabanlı post-race analiz sunar. Pilot ve mühendisler, veriyi grafik + doğal dil tavsiye formatında anında görüp yorumlayabilir.
+
+🎯 Goal
+
+Yarış sonrası analiz süresini saatlerden saniyelere indir.
+
+Veriyi insan dostu, aksiyon alınabilir bilgiler hâline getir.
+
+Generative AI + motorsport verisi ile benzersiz ve yüksek etki yarat.
+
+⚙️ Features
+1. Anomaly Detection
+
+UI: Interaktif pist haritası, kırmızı noktalarla anomali gösterimi.
+
+AI: Hız düşüşleri, gereksiz frenleme, lastik aşınması, pit stop hataları gibi stratejik verileri algılar.
+
+Ek: Verideki pit stop ve lastik aşınması bilgisi de analizde gösterilecek.
+
+2. Perfect Lap Comparison
+
+UI: Sol: en iyi tur, Sağ: pilotun turu
+
+AI: AI farkları sözel olarak anlatır, örn.:
+
+“Turn 7’de rakibinden 0.4s geç kaldın, çıkış hızın düşmüş. Tire aşınması %5 artmış.”
+
+Ek: Lastik aşınması ve fren basınç farklarını da metin olarak göster.
+
+3. Natural Language Query
+
+UI: Chatbox
+
+AI: Kullanıcı sorar:
+
+“Neden 15. turda yavaşladım?”
+
+Yanıt:
+
+“Lastik basıncın %10 düştü, Turn 9’da frenleme fazlaydı. Pit stop stratejisi önerisi: 12. turda pite gir.”
+
+Ek: Yanıtlar hem pilot hem mühendis anlayacak şekilde dengeli, jargon ve basit dil karışımı.
+
+4. Suggested Improvements (Bonus)
+
+AI, gelecek yarışlar için stratejik öneriler sunar:
+
+“Turn 12’de biraz erken çık, lastiğin daha uzun ömürlü olur ve çıkış hızın artar.”
+
+Bu özellik, “potential impact” kriteri için ekstra puan sağlar.
+
+5. Summary Report
+
+Otomatik PDF/HTML rapor: anomali noktaları, AI yorumları, pit stop önerileri.
+
+🛠️ Tech Stack
+
+Frontend / Dashboard: Streamlit
+
+Data Processing: Pandas, Numpy
+
+Visualization: Plotly (interactive)
+
+AI Layer: Gemini API veya OpenAI API
+
+Data Storage: JSON formatlı özetler + AI tavsiyeleri
+
+📊 Data
+
+Circuit: Circuit of the Americas
+
+Dataset: Telemetri, lastik aşınması, frenleme, pit stop, tur zamanı
+
+Preprocessing:
+
+Tur normalizasyonu
+
+Hız, fren, lastik aşınması ve pit stop verilerinden anomali ve fark tespiti
+
+JSON formatında AI inputu
+
+🛣️ Roadmap
+
+Week 1: Veri ön işleme + temel dashboard
+
+Week 2: AI pipeline + anomaly detection + NLP summary
+
+Week 3: Streamlit UI + Perfect Lap + Chatbox
+
+Week 4: Suggested improvements + test + demo video
+
+🎨 Design Concept
+
+Clean, minimal UI (Apple vari)
+
+Track map + anomaly noktaları
+
+Side-by-side lap comparison + AI textual advice
+
+Chat widget alt köşede
+
+Toyota Racing renkleri: kırmızı, siyah, beyaz
