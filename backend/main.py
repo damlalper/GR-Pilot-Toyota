@@ -1,0 +1,1348 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import pandas as pd
+import numpy as np
+from typing import Optional, List
+import os
+from groq import Groq
+
+# ML Models import
+try:
+    from ml.anomaly_model import DrivingAnomalyDetector
+    from ml.lap_predictor import LapTimePredictor
+    from ml.driver_clustering import DriverStyleClusterer
+    from ml.feature_engineering import LapFeatureAggregator
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    print("ML modules not available - using fallback methods")
+
+app = FastAPI(title="GR-Pilot API", version="2.0.0")
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Data paths - Circuit of the Americas Race 2
+DATA_DIR = r"C:\Users\Lenovo\Desktop\hackathons\TOYOTA\COTA\Race 2"
+TELEMETRY_PATH = os.path.join(DATA_DIR, "R2_cota_telemetry_data.csv")
+WEATHER_PATH = os.path.join(DATA_DIR, "26_Weather_ Race 2_Anonymized.CSV")
+SECTORS_PATH = os.path.join(DATA_DIR, "23_AnalysisEnduranceWithSections_ Race 2_Anonymized.CSV")
+LAP_TIMES_PATH = os.path.join(DATA_DIR, "COTA_lap_time_R2.csv")
+BEST_LAPS_PATH = os.path.join(DATA_DIR, "99_Best 10 Laps By Driver_ Race 2_Anonymized.CSV")
+
+# Groq client
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+# Cache
+cached_data = {}
+
+# ML Models cache
+ml_models = {
+    'anomaly_detector': None,
+    'lap_predictor': None,
+    'driver_clusterer': None
+}
+
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ml", "trained_models")
+
+def load_ml_models():
+    """Load trained ML models if available."""
+    global ml_models
+
+    if not ML_AVAILABLE:
+        return
+
+    # Load Anomaly Detector
+    anomaly_path = os.path.join(MODELS_DIR, "anomaly_detector.pkl")
+    if os.path.exists(anomaly_path) and ml_models['anomaly_detector'] is None:
+        try:
+            ml_models['anomaly_detector'] = DrivingAnomalyDetector()
+            ml_models['anomaly_detector'].load(anomaly_path)
+            print("✓ Anomaly detector loaded")
+        except Exception as e:
+            print(f"✗ Failed to load anomaly detector: {e}")
+
+    # Load Lap Predictor
+    predictor_path = os.path.join(MODELS_DIR, "lap_predictor.pkl")
+    if os.path.exists(predictor_path) and ml_models['lap_predictor'] is None:
+        try:
+            ml_models['lap_predictor'] = LapTimePredictor()
+            ml_models['lap_predictor'].load(predictor_path)
+            print("✓ Lap predictor loaded")
+        except Exception as e:
+            print(f"✗ Failed to load lap predictor: {e}")
+
+    # Load Driver Clusterer
+    clusterer_path = os.path.join(MODELS_DIR, "driver_clusterer.pkl")
+    if os.path.exists(clusterer_path) and ml_models['driver_clusterer'] is None:
+        try:
+            ml_models['driver_clusterer'] = DriverStyleClusterer()
+            ml_models['driver_clusterer'].load(clusterer_path)
+            print("✓ Driver clusterer loaded")
+        except Exception as e:
+            print(f"✗ Failed to load driver clusterer: {e}")
+
+def load_telemetry(nrows=500000):
+    if "telemetry" in cached_data:
+        return cached_data["telemetry"]
+
+    try:
+        df_raw = pd.read_csv(TELEMETRY_PATH, nrows=nrows)
+        unique_vehicles = df_raw['vehicle_id'].unique()
+        if len(unique_vehicles) > 0:
+            df_raw = df_raw[df_raw['vehicle_id'] == unique_vehicles[0]]
+
+        df_raw['timestamp'] = pd.to_datetime(df_raw['timestamp'])
+        df_pivot = df_raw.pivot_table(
+            index='timestamp',
+            columns='telemetry_name',
+            values='telemetry_value',
+            aggfunc='first'
+        )
+
+        lap_series = df_raw.groupby('timestamp')['lap'].first()
+        df_pivot = df_pivot.join(lap_series)
+        df_pivot = df_pivot.ffill().dropna()
+        df_pivot = df_pivot.reset_index()
+
+        numeric_cols = ['speed', 'nmot', 'Steering_Angle', 'ath', 'pbrake_f', 'pbrake_r', 'accx_can', 'accy_can', 'gear']
+        for col in numeric_cols:
+            if col in df_pivot.columns:
+                df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce')
+
+        if 'speed' in df_pivot.columns:
+            df_pivot['time_delta'] = df_pivot['timestamp'].diff().dt.total_seconds().fillna(0)
+            df_pivot['speed_ms'] = df_pivot['speed'] / 3.6
+            df_pivot['distance_delta'] = df_pivot['speed_ms'] * df_pivot['time_delta']
+            df_pivot['distance'] = df_pivot['distance_delta'].cumsum()
+
+        # Dead reckoning for position
+        if 'Steering_Angle' in df_pivot.columns:
+            STEERING_FACTOR = 0.002
+            v = df_pivot['speed'] / 3.6
+            delta = np.radians(df_pivot['Steering_Angle'])
+            heading_change = delta * v * df_pivot['time_delta'] * STEERING_FACTOR
+            df_pivot['heading'] = heading_change.cumsum()
+            df_pivot['dx'] = v * np.cos(df_pivot['heading']) * df_pivot['time_delta']
+            df_pivot['dy'] = v * np.sin(df_pivot['heading']) * df_pivot['time_delta']
+            df_pivot['WorldPositionX'] = df_pivot['dx'].cumsum()
+            df_pivot['WorldPositionY'] = df_pivot['dy'].cumsum()
+
+            # Convert to lat/lon
+            COTA_LAT, COTA_LON = 30.1328, -97.6411
+            df_pivot['lat'] = COTA_LAT + (df_pivot['WorldPositionY'] / 111000)
+            df_pivot['lon'] = COTA_LON + (df_pivot['WorldPositionX'] / 96000)
+
+        cached_data["telemetry"] = df_pivot
+        return df_pivot
+    except Exception as e:
+        print(f"Error loading telemetry: {e}")
+        return pd.DataFrame()
+
+def load_lap_times():
+    if "lap_times" in cached_data:
+        return cached_data["lap_times"]
+    try:
+        df = pd.read_csv(LAP_TIMES_PATH)
+        cached_data["lap_times"] = df
+        return df
+    except:
+        return pd.DataFrame()
+
+def load_weather():
+    if "weather" in cached_data:
+        return cached_data["weather"]
+    try:
+        df = pd.read_csv(WEATHER_PATH, sep=';')
+        # Rename columns to standard names
+        df = df.rename(columns={
+            'AIR_TEMP': 'ambient_temp',
+            'TRACK_TEMP': 'track_temp',
+            'HUMIDITY': 'humidity',
+            'WIND_SPEED': 'wind_speed',
+            'WIND_DIRECTION': 'wind_direction',
+            'RAIN': 'rain',
+            'PRESSURE': 'pressure'
+        })
+        cached_data["weather"] = df
+        return df
+    except Exception as e:
+        print(f"Error loading weather: {e}")
+        return pd.DataFrame()
+
+def load_sectors():
+    if "sectors" in cached_data:
+        return cached_data["sectors"]
+    try:
+        df = pd.read_csv(SECTORS_PATH, sep=';')
+        cached_data["sectors"] = df
+        return df
+    except Exception as e:
+        print(f"Error loading sectors: {e}")
+        return pd.DataFrame()
+
+@app.on_event("startup")
+async def startup_event():
+    """Load ML models on startup."""
+    load_ml_models()
+
+@app.get("/")
+def root():
+    return {
+        "message": "GR-Pilot API",
+        "version": "2.0.0",
+        "status": "running",
+        "ml_models_loaded": {
+            "anomaly_detector": ml_models['anomaly_detector'] is not None,
+            "lap_predictor": ml_models['lap_predictor'] is not None,
+            "driver_clusterer": ml_models['driver_clusterer'] is not None
+        }
+    }
+
+@app.get("/api/telemetry")
+def get_telemetry(lap: Optional[int] = None, sample: int = 100):
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No telemetry data")
+
+    if lap is not None:
+        df = df[df['lap'] == lap].copy()
+        if not df.empty:
+            df['distance'] = df['distance'] - df['distance'].iloc[0]
+
+    # Sample for performance
+    if len(df) > sample:
+        indices = np.linspace(0, len(df)-1, sample, dtype=int)
+        df = df.iloc[indices]
+
+    return df.to_dict(orient='records')
+
+@app.get("/api/laps")
+def get_laps():
+    df = load_telemetry()
+    if df.empty:
+        return []
+    return sorted(df['lap'].unique().tolist())
+
+@app.get("/api/lap/{lap_number}")
+def get_lap_data(lap_number: int, points: int = 500):
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap_number].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Sample
+    if len(df_lap) > points:
+        indices = np.linspace(0, len(df_lap)-1, points, dtype=int)
+        df_lap = df_lap.iloc[indices]
+
+    cols = ['distance', 'speed', 'nmot', 'ath', 'pbrake_f', 'Steering_Angle', 'gear',
+            'WorldPositionX', 'WorldPositionY', 'lat', 'lon', 'timestamp']
+    available_cols = [c for c in cols if c in df_lap.columns]
+
+    result = df_lap[available_cols].copy()
+    result['timestamp'] = result['timestamp'].astype(str)
+
+    return {
+        "lap": lap_number,
+        "points": len(result),
+        "data": result.to_dict(orient='records'),
+        "stats": {
+            "max_speed": float(df_lap['speed'].max()),
+            "avg_speed": float(df_lap['speed'].mean()),
+            "max_rpm": float(df_lap['nmot'].max()) if 'nmot' in df_lap.columns else 0,
+            "distance": float(df_lap['distance'].max())
+        }
+    }
+
+@app.get("/api/track")
+def get_track_data():
+    df = load_telemetry()
+    if df.empty or 'WorldPositionX' not in df.columns:
+        raise HTTPException(status_code=404, detail="No track data")
+
+    # Get one full lap for track outline
+    laps = df['lap'].unique()
+    if len(laps) == 0:
+        raise HTTPException(status_code=404, detail="No laps")
+
+    df_lap = df[df['lap'] == laps[0]].copy()
+
+    # Sample for track outline
+    if len(df_lap) > 200:
+        indices = np.linspace(0, len(df_lap)-1, 200, dtype=int)
+        df_lap = df_lap.iloc[indices]
+
+    return {
+        "track": df_lap[['WorldPositionX', 'WorldPositionY', 'lat', 'lon', 'speed']].to_dict(orient='records'),
+        "bounds": {
+            "minX": float(df_lap['WorldPositionX'].min()),
+            "maxX": float(df_lap['WorldPositionX'].max()),
+            "minY": float(df_lap['WorldPositionY'].min()),
+            "maxY": float(df_lap['WorldPositionY'].max())
+        }
+    }
+
+@app.get("/api/weather")
+def get_weather():
+    df = load_weather()
+    if df.empty:
+        return {}
+    return df.iloc[0].to_dict()
+
+@app.get("/api/lap_times")
+def get_lap_times():
+    df = load_lap_times()
+    if df.empty:
+        return []
+    return df.to_dict(orient='records')
+
+class ChatRequest(BaseModel):
+    message: str
+    lap: Optional[int] = None
+
+# ============================================
+# ANOMALY DETECTION
+# ============================================
+def detect_anomalies(df_main, df_ref, speed_threshold=15.0):
+    """Detect anomalies where main driver is significantly slower than reference."""
+    if df_main.empty or df_ref.empty:
+        return []
+
+    # Interpolate main speed to reference distance
+    common_distance = df_ref['distance'].values
+    main_speed_interp = np.interp(common_distance, df_main['distance'].values, df_main['speed'].values)
+
+    # Calculate delta
+    speed_delta = df_ref['speed'].values - main_speed_interp
+
+    # Find anomalies
+    anomalies = []
+    for i, delta in enumerate(speed_delta):
+        if delta > speed_threshold:
+            anomalies.append({
+                "distance": float(common_distance[i]),
+                "ref_speed": float(df_ref['speed'].iloc[i]),
+                "user_speed": float(main_speed_interp[i]),
+                "speed_delta": float(delta),
+                "x": float(df_ref['WorldPositionX'].iloc[i]) if 'WorldPositionX' in df_ref.columns else 0,
+                "y": float(df_ref['WorldPositionY'].iloc[i]) if 'WorldPositionY' in df_ref.columns else 0,
+                "lat": float(df_ref['lat'].iloc[i]) if 'lat' in df_ref.columns else 0,
+                "lon": float(df_ref['lon'].iloc[i]) if 'lon' in df_ref.columns else 0,
+            })
+
+    return anomalies
+
+@app.get("/api/best_lap")
+def get_best_lap():
+    """Find the best lap (fastest) from lap times or telemetry."""
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    # Calculate lap times from telemetry
+    laps = df['lap'].unique()
+    lap_times = []
+
+    for lap in laps:
+        df_lap = df[df['lap'] == lap]
+        if len(df_lap) > 10:
+            lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+            lap_times.append({"lap": int(lap), "time": lap_time})
+
+    if not lap_times:
+        raise HTTPException(status_code=404, detail="No valid laps")
+
+    # Sort by time
+    lap_times.sort(key=lambda x: x['time'])
+    best = lap_times[0]
+
+    return {
+        "best_lap": best['lap'],
+        "best_time": best['time'],
+        "all_lap_times": lap_times
+    }
+
+@app.get("/api/anomalies/{lap}")
+def get_anomalies(lap: int, ref_lap: Optional[int] = None, threshold: float = 15.0, use_ml: bool = True):
+    """
+    Detect anomalies using ML Isolation Forest or reference lap comparison.
+    ML model detects unusual driving patterns (sudden braking, erratic steering, etc.)
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_user = df[df['lap'] == lap].copy()
+    if df_user.empty:
+        raise HTTPException(status_code=404, detail="User lap not found")
+    df_user['distance'] = df_user['distance'] - df_user['distance'].iloc[0]
+
+    # Try ML-based anomaly detection first
+    if use_ml and ml_models['anomaly_detector'] is not None:
+        try:
+            ml_report = ml_models['anomaly_detector'].get_anomaly_report(df_user)
+
+            return {
+                "user_lap": lap,
+                "detection_method": "ML_IsolationForest",
+                "anomaly_count": ml_report['anomaly_count'],
+                "anomaly_percentage": round(ml_report['anomaly_percentage'], 2),
+                "total_points": ml_report['total_points'],
+                "anomalies": ml_report['anomalies'][:20]  # Top 20 anomalies
+            }
+        except Exception as e:
+            print(f"ML anomaly detection failed, using fallback: {e}")
+
+    # Fallback: Reference lap comparison
+    if ref_lap is None:
+        best_lap_data = get_best_lap()
+        ref_lap = best_lap_data['best_lap']
+
+    df_ref = df[df['lap'] == ref_lap].copy()
+    if df_ref.empty:
+        raise HTTPException(status_code=404, detail="Reference lap not found")
+    df_ref['distance'] = df_ref['distance'] - df_ref['distance'].iloc[0]
+
+    anomalies = detect_anomalies(df_user, df_ref, threshold)
+
+    explanations = []
+    for a in sorted(anomalies, key=lambda x: x['speed_delta'], reverse=True)[:10]:
+        if a['speed_delta'] > 30:
+            reason = "Critical speed loss - possible missed apex or heavy braking"
+        elif a['speed_delta'] > 20:
+            reason = "Significant speed loss - check braking point"
+        else:
+            reason = "Minor speed loss - optimize racing line"
+        explanations.append({**a, "reason": reason, "type": "speed_comparison"})
+
+    return {
+        "user_lap": lap,
+        "ref_lap": ref_lap,
+        "detection_method": "reference_comparison",
+        "threshold": threshold,
+        "anomaly_count": len(anomalies),
+        "anomalies": explanations
+    }
+
+# ============================================
+# LAP COMPARISON
+# ============================================
+@app.get("/api/compare/{lap1}/{lap2}")
+def compare_laps(lap1: int, lap2: int, points: int = 200):
+    """Compare two laps side by side."""
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    # Get lap 1
+    df_lap1 = df[df['lap'] == lap1].copy()
+    if df_lap1.empty:
+        raise HTTPException(status_code=404, detail=f"Lap {lap1} not found")
+    df_lap1['distance'] = df_lap1['distance'] - df_lap1['distance'].iloc[0]
+
+    # Get lap 2
+    df_lap2 = df[df['lap'] == lap2].copy()
+    if df_lap2.empty:
+        raise HTTPException(status_code=404, detail=f"Lap {lap2} not found")
+    df_lap2['distance'] = df_lap2['distance'] - df_lap2['distance'].iloc[0]
+
+    # Sample both laps
+    def sample_lap(df_lap, n):
+        if len(df_lap) > n:
+            indices = np.linspace(0, len(df_lap)-1, n, dtype=int)
+            return df_lap.iloc[indices]
+        return df_lap
+
+    df_lap1 = sample_lap(df_lap1, points)
+    df_lap2 = sample_lap(df_lap2, points)
+
+    # Create common distance axis
+    max_dist = min(df_lap1['distance'].max(), df_lap2['distance'].max())
+    common_dist = np.linspace(0, max_dist, points)
+
+    # Interpolate both laps to common distance
+    def interp_lap(df_lap, dist):
+        result = {'distance': dist.tolist()}
+        for col in ['speed', 'nmot', 'ath', 'pbrake_f', 'Steering_Angle']:
+            if col in df_lap.columns:
+                result[col] = np.interp(dist, df_lap['distance'].values, df_lap[col].values).tolist()
+        return result
+
+    lap1_data = interp_lap(df_lap1, common_dist)
+    lap2_data = interp_lap(df_lap2, common_dist)
+
+    # Calculate deltas
+    speed_delta = [lap1_data['speed'][i] - lap2_data['speed'][i] for i in range(len(common_dist))]
+    cumulative_delta = np.cumsum([d / 3.6 * 0.01 for d in speed_delta]).tolist()  # Approximate time delta
+
+    # Stats
+    lap1_time = (df[df['lap'] == lap1]['timestamp'].max() - df[df['lap'] == lap1]['timestamp'].min()).total_seconds()
+    lap2_time = (df[df['lap'] == lap2]['timestamp'].max() - df[df['lap'] == lap2]['timestamp'].min()).total_seconds()
+
+    return {
+        "lap1": {"number": lap1, "time": lap1_time, "data": lap1_data},
+        "lap2": {"number": lap2, "time": lap2_time, "data": lap2_data},
+        "delta": {
+            "distance": common_dist.tolist(),
+            "speed_delta": speed_delta,
+            "cumulative_time_delta": cumulative_delta
+        },
+        "time_difference": lap1_time - lap2_time
+    }
+
+# ============================================
+# SUGGESTIONS
+# ============================================
+@app.get("/api/suggestions/{lap}")
+def get_suggestions(lap: int):
+    """Generate improvement suggestions based on anomaly analysis."""
+    try:
+        anomaly_data = get_anomalies(lap)
+        anomalies = anomaly_data.get('anomalies', [])
+    except:
+        anomalies = []
+
+    suggestions = []
+
+    if not anomalies:
+        suggestions.append({
+            "type": "general",
+            "title": "Good Performance",
+            "description": "No significant anomalies detected. Focus on consistency.",
+            "priority": "low"
+        })
+    else:
+        # Group anomalies by distance zones
+        zones = {}
+        for a in anomalies:
+            zone = int(a['distance'] // 500) * 500  # 500m zones
+            if zone not in zones:
+                zones[zone] = []
+            zones[zone].append(a)
+
+        for zone, zone_anomalies in sorted(zones.items()):
+            avg_delta = sum(a['speed_delta'] for a in zone_anomalies) / len(zone_anomalies)
+
+            if avg_delta > 25:
+                priority = "high"
+                title = f"Critical Zone: {zone}m - {zone+500}m"
+                desc = f"Average speed loss of {avg_delta:.1f} km/h. Check braking point and apex."
+            elif avg_delta > 15:
+                priority = "medium"
+                title = f"Improvement Zone: {zone}m - {zone+500}m"
+                desc = f"Speed loss of {avg_delta:.1f} km/h. Optimize racing line."
+            else:
+                continue
+
+            suggestions.append({
+                "type": "zone",
+                "title": title,
+                "description": desc,
+                "priority": priority,
+                "distance_start": zone,
+                "distance_end": zone + 500,
+                "speed_delta": avg_delta
+            })
+
+    # Add general suggestions
+    df = load_telemetry()
+    if not df.empty:
+        df_lap = df[df['lap'] == lap]
+        if not df_lap.empty:
+            avg_throttle = df_lap['ath'].mean()
+            max_brake = df_lap['pbrake_f'].max()
+
+            if avg_throttle < 60:
+                suggestions.append({
+                    "type": "throttle",
+                    "title": "Throttle Application",
+                    "description": f"Average throttle is {avg_throttle:.1f}%. Consider more aggressive acceleration.",
+                    "priority": "medium"
+                })
+
+            if max_brake > 80:
+                suggestions.append({
+                    "type": "braking",
+                    "title": "Braking Intensity",
+                    "description": f"Max brake pressure is {max_brake:.1f}. Try earlier, lighter braking.",
+                    "priority": "low"
+                })
+
+    return {
+        "lap": lap,
+        "suggestion_count": len(suggestions),
+        "suggestions": suggestions
+    }
+
+# ============================================
+# REPORT GENERATION
+# ============================================
+@app.get("/api/report/{lap}")
+def generate_report(lap: int, format: str = "json"):
+    """Generate a comprehensive lap analysis report."""
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    # Gather all data
+    try:
+        anomaly_data = get_anomalies(lap)
+    except:
+        anomaly_data = {"anomalies": [], "anomaly_count": 0}
+
+    try:
+        suggestion_data = get_suggestions(lap)
+    except:
+        suggestion_data = {"suggestions": []}
+
+    try:
+        best_lap_data = get_best_lap()
+    except:
+        best_lap_data = {"best_lap": None}
+
+    weather = load_weather()
+    weather_data = weather.iloc[0].to_dict() if not weather.empty else {}
+
+    # Calculate lap stats
+    lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+
+    report = {
+        "report_type": "Lap Analysis Report",
+        "lap_number": lap,
+        "lap_time": lap_time,
+        "best_lap": best_lap_data.get('best_lap'),
+        "best_lap_time": best_lap_data.get('best_time'),
+        "statistics": {
+            "max_speed": float(df_lap['speed'].max()),
+            "avg_speed": float(df_lap['speed'].mean()),
+            "min_speed": float(df_lap['speed'].min()),
+            "max_rpm": float(df_lap['nmot'].max()) if 'nmot' in df_lap.columns else 0,
+            "avg_rpm": float(df_lap['nmot'].mean()) if 'nmot' in df_lap.columns else 0,
+            "avg_throttle": float(df_lap['ath'].mean()) if 'ath' in df_lap.columns else 0,
+            "max_brake": float(df_lap['pbrake_f'].max()) if 'pbrake_f' in df_lap.columns else 0,
+            "distance": float(df_lap['distance'].max() - df_lap['distance'].min()),
+        },
+        "anomalies": {
+            "count": anomaly_data.get('anomaly_count', 0),
+            "details": anomaly_data.get('anomalies', [])[:10]
+        },
+        "suggestions": suggestion_data.get('suggestions', []),
+        "weather": weather_data,
+        "summary": ""
+    }
+
+    # Generate AI summary if available
+    if groq_client:
+        try:
+            summary_prompt = f"""Generate a brief race engineer summary for this lap:
+- Lap Time: {lap_time:.2f}s (Best: {best_lap_data.get('best_time', 'N/A')})
+- Max Speed: {report['statistics']['max_speed']:.1f} km/h
+- Anomalies: {report['anomalies']['count']} detected
+- Top suggestion: {report['suggestions'][0]['description'] if report['suggestions'] else 'None'}
+
+Keep it under 100 words, professional tone."""
+
+            response = groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are GR-Pilot, a professional race engineer."},
+                    {"role": "user", "content": summary_prompt}
+                ],
+                model="llama-3.3-70b-versatile",
+                max_tokens=150,
+            )
+            report['summary'] = response.choices[0].message.content
+        except:
+            report['summary'] = f"Lap {lap} completed in {lap_time:.2f}s with {report['anomalies']['count']} anomalies detected."
+    else:
+        report['summary'] = f"Lap {lap} completed in {lap_time:.2f}s with {report['anomalies']['count']} anomalies detected."
+
+    return report
+
+# ============================================
+# DRIVER DNA - ML-Powered Sürüş Karakteri Analizi
+# ============================================
+@app.get("/api/driver_dna/{lap}")
+def get_driver_dna(lap: int):
+    """
+    Analyze driver's unique driving signature using ML clustering.
+    Uses trained K-Means model to classify driving style.
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Try ML model first
+    if ml_models['driver_clusterer'] is not None:
+        try:
+            dna_result = ml_models['driver_clusterer'].get_driver_dna(df_lap)
+
+            # Build pattern data for visualization
+            pattern_data = []
+            step = max(1, len(df_lap) // 50)
+            for i in range(0, len(df_lap), step):
+                point = df_lap.iloc[i]
+                pattern_data.append({
+                    "distance": float(point['distance']),
+                    "throttle": float(point['ath']) if 'ath' in point else 0,
+                    "brake": float(point['pbrake_f']) if 'pbrake_f' in point else 0,
+                    "steering": float(point['Steering_Angle']) if 'Steering_Angle' in point else 0
+                })
+
+            return {
+                "lap": lap,
+                "model_type": "ML_KMeans_Clustering",
+                "driver_type": dna_result['style_name'],
+                "driver_description": dna_result['style_description'],
+                "dna_scores": dna_result['dna_scores'],
+                "cluster_id": dna_result['cluster_id'],
+                "recommendations": dna_result['recommendations'],
+                "metrics": dna_result['raw_metrics'],
+                "pattern_data": pattern_data
+            }
+        except Exception as e:
+            print(f"ML model error, falling back: {e}")
+
+    # Fallback to rule-based analysis
+    throttle_aggressiveness = df_lap['ath'].std() if 'ath' in df_lap.columns else 0
+    throttle_avg = df_lap['ath'].mean() if 'ath' in df_lap.columns else 0
+    full_throttle_pct = (df_lap['ath'] > 90).sum() / len(df_lap) * 100 if 'ath' in df_lap.columns else 0
+    brake_intensity = df_lap['pbrake_f'].mean() if 'pbrake_f' in df_lap.columns else 0
+    brake_max = df_lap['pbrake_f'].max() if 'pbrake_f' in df_lap.columns else 0
+    hard_brake_pct = (df_lap['pbrake_f'] > 50).sum() / len(df_lap) * 100 if 'pbrake_f' in df_lap.columns else 0
+    steering_smoothness = 100 - min(df_lap['Steering_Angle'].diff().abs().mean(), 100) if 'Steering_Angle' in df_lap.columns else 50
+    steering_corrections = (df_lap['Steering_Angle'].diff().abs() > 5).sum() if 'Steering_Angle' in df_lap.columns else 0
+    speed_consistency = 100 - min(df_lap['speed'].std() / df_lap['speed'].mean() * 100, 100) if 'speed' in df_lap.columns else 50
+
+    aggression_score = min((throttle_aggressiveness * 2 + hard_brake_pct) / 2, 100)
+    smoothness_score = min((steering_smoothness + speed_consistency) / 2, 100)
+    consistency_score = min(100 - (steering_corrections / len(df_lap) * 1000), 100)
+
+    if aggression_score > 70 and smoothness_score < 50:
+        driver_type, driver_desc = "Aggressive Attacker", "High risk, high reward style."
+    elif smoothness_score > 70 and aggression_score < 40:
+        driver_type, driver_desc = "Smooth Operator", "Consistent and precise."
+    elif aggression_score > 50 and smoothness_score > 50:
+        driver_type, driver_desc = "Balanced Racer", "Good mix of speed and consistency."
+    else:
+        driver_type, driver_desc = "Conservative Driver", "Safe approach."
+
+    pattern_data = []
+    step = max(1, len(df_lap) // 50)
+    for i in range(0, len(df_lap), step):
+        point = df_lap.iloc[i]
+        pattern_data.append({
+            "distance": float(point['distance']),
+            "throttle": float(point['ath']) if 'ath' in point else 0,
+            "brake": float(point['pbrake_f']) if 'pbrake_f' in point else 0,
+            "steering": float(point['Steering_Angle']) if 'Steering_Angle' in point else 0
+        })
+
+    return {
+        "lap": lap,
+        "model_type": "rule_based_fallback",
+        "driver_type": driver_type,
+        "driver_description": driver_desc,
+        "dna_scores": {
+            "aggression": round(aggression_score, 1),
+            "smoothness": round(smoothness_score, 1),
+            "consistency": round(consistency_score, 1)
+        },
+        "metrics": {
+            "throttle_avg": round(throttle_avg, 1),
+            "full_throttle_pct": round(full_throttle_pct, 1),
+            "brake_max": round(brake_max, 1),
+            "hard_brake_pct": round(hard_brake_pct, 1),
+            "steering_corrections": int(steering_corrections)
+        },
+        "pattern_data": pattern_data
+    }
+
+# ============================================
+# GRIP INDEX - Weather + Telemetry Fusion
+# ============================================
+@app.get("/api/grip_index/{lap}")
+def get_grip_index(lap: int):
+    """
+    Calculate grip index by combining weather data with telemetry.
+    Higher index = better grip conditions.
+    """
+    df = load_telemetry()
+    weather = load_weather()
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Weather factors
+    track_temp = 35  # Default
+    ambient_temp = 25
+    humidity = 50
+
+    if not weather.empty:
+        w = weather.iloc[0]
+        track_temp = float(w.get('track_temp', w.get('TrackTemp', 35)))
+        ambient_temp = float(w.get('ambient_temp', w.get('AmbientTemp', 25)))
+        humidity = float(w.get('humidity', w.get('Humidity', 50)))
+
+    # Temperature impact on grip (optimal around 30-45°C for track)
+    temp_factor = 100 - abs(track_temp - 37.5) * 2
+    temp_factor = max(0, min(100, temp_factor))
+
+    # Humidity impact (lower is better for grip)
+    humidity_factor = 100 - humidity * 0.5
+
+    # Base grip from weather
+    weather_grip = (temp_factor * 0.6 + humidity_factor * 0.4)
+
+    # Calculate grip index along the track
+    grip_data = []
+    step = max(1, len(df_lap) // 100)
+
+    for i in range(0, len(df_lap), step):
+        point = df_lap.iloc[i]
+
+        # Lateral G estimation from steering and speed
+        speed = point['speed'] if 'speed' in point else 0
+        steering = abs(point['Steering_Angle']) if 'Steering_Angle' in point else 0
+
+        # Higher speed + higher steering = more lateral load = grip test
+        lateral_load = (speed / 200) * (steering / 100) * 100
+
+        # Brake pressure impact
+        brake = point['pbrake_f'] if 'pbrake_f' in point else 0
+        longitudinal_load = brake * 1.5
+
+        # Combined grip demand
+        grip_demand = min(np.sqrt(lateral_load**2 + longitudinal_load**2), 100)
+
+        # Estimated grip available (weather base - tire wear simulation)
+        distance_factor = 1 - (point['distance'] / (df_lap['distance'].max() + 1)) * 0.1
+        grip_available = weather_grip * distance_factor
+
+        # Grip margin (positive = safe, negative = sliding)
+        grip_margin = grip_available - grip_demand
+
+        grip_data.append({
+            "distance": float(point['distance']),
+            "grip_demand": round(grip_demand, 1),
+            "grip_available": round(grip_available, 1),
+            "grip_margin": round(grip_margin, 1),
+            "lateral_load": round(lateral_load, 1),
+            "x": float(point['WorldPositionX']) if 'WorldPositionX' in point else 0,
+            "y": float(point['WorldPositionY']) if 'WorldPositionY' in point else 0
+        })
+
+    # Find critical zones (low grip margin)
+    critical_zones = [g for g in grip_data if g['grip_margin'] < 10]
+
+    return {
+        "lap": lap,
+        "overall_grip_index": round(weather_grip, 1),
+        "weather_factors": {
+            "track_temp": track_temp,
+            "ambient_temp": ambient_temp,
+            "humidity": humidity,
+            "temp_factor": round(temp_factor, 1),
+            "humidity_factor": round(humidity_factor, 1)
+        },
+        "grip_data": grip_data,
+        "critical_zones_count": len(critical_zones),
+        "critical_zones": critical_zones[:10],
+        "recommendation": "Good grip conditions" if weather_grip > 70 else "Caution: Reduced grip" if weather_grip > 50 else "Warning: Low grip conditions"
+    }
+
+# ============================================
+# SECTOR ANALYSIS - Time Gain/Loss (REAL DATA)
+# ============================================
+@app.get("/api/sectors/{lap}")
+def get_sector_analysis(lap: int, driver_number: int = 1):
+    """
+    Get real sector times from race data.
+    Uses actual S1, S2, S3 times from the timing system.
+    """
+    sectors_df = load_sectors()
+    df = load_telemetry()
+
+    # Try to use real sector data first
+    if not sectors_df.empty:
+        # Filter by driver and lap
+        driver_data = sectors_df[sectors_df[' DRIVER_NUMBER'] == driver_number]
+        lap_data = driver_data[driver_data[' LAP_NUMBER'] == lap]
+
+        if not lap_data.empty:
+            row = lap_data.iloc[0]
+
+            # Get best sectors from all laps for this driver
+            best_s1 = driver_data[' S1_SECONDS'].min()
+            best_s2 = driver_data[' S2_SECONDS'].min()
+            best_s3 = driver_data[' S3_SECONDS'].min()
+
+            s1_time = float(row[' S1_SECONDS'])
+            s2_time = float(row[' S2_SECONDS'])
+            s3_time = float(row[' S3_SECONDS'])
+
+            sectors = [
+                {
+                    "sector": 1,
+                    "time": round(s1_time, 3),
+                    "best_time": round(best_s1, 3),
+                    "time_delta": round(s1_time - best_s1, 3),
+                    "status": "faster" if s1_time <= best_s1 else "slower",
+                    "color": "#22c55e" if s1_time <= best_s1 + 0.1 else "#ef4444",
+                    "top_speed": float(row.get(' TOP_SPEED', 0)) if ' TOP_SPEED' in row else 0
+                },
+                {
+                    "sector": 2,
+                    "time": round(s2_time, 3),
+                    "best_time": round(best_s2, 3),
+                    "time_delta": round(s2_time - best_s2, 3),
+                    "status": "faster" if s2_time <= best_s2 else "slower",
+                    "color": "#22c55e" if s2_time <= best_s2 + 0.1 else "#ef4444"
+                },
+                {
+                    "sector": 3,
+                    "time": round(s3_time, 3),
+                    "best_time": round(best_s3, 3),
+                    "time_delta": round(s3_time - best_s3, 3),
+                    "status": "faster" if s3_time <= best_s3 else "slower",
+                    "color": "#22c55e" if s3_time <= best_s3 + 0.1 else "#ef4444"
+                }
+            ]
+
+            total_time = s1_time + s2_time + s3_time
+            theoretical_best = best_s1 + best_s2 + best_s3
+
+            return {
+                "lap": lap,
+                "driver_number": driver_number,
+                "data_source": "official_timing",
+                "sectors": sectors,
+                "total_time": round(total_time, 3),
+                "theoretical_best": round(theoretical_best, 3),
+                "potential_gain": round(total_time - theoretical_best, 3),
+                "lap_time_official": str(row.get(' LAP_TIME', '')),
+                "top_speed": float(row.get(' TOP_SPEED', 0)) if ' TOP_SPEED' in row else 0,
+                "class": str(row.get(' CLASS', '')).strip() if ' CLASS' in row else ""
+            }
+
+    # Fallback to telemetry-based calculation
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+    max_distance = df_lap['distance'].max()
+
+    # 3 sectors like real racing
+    num_sectors = 3
+    sector_length = max_distance / num_sectors
+    sectors = []
+
+    for i in range(num_sectors):
+        start_dist = i * sector_length
+        end_dist = (i + 1) * sector_length
+        sector_data = df_lap[(df_lap['distance'] >= start_dist) & (df_lap['distance'] < end_dist)]
+
+        if len(sector_data) >= 2:
+            sector_time = (sector_data['timestamp'].max() - sector_data['timestamp'].min()).total_seconds()
+            sectors.append({
+                "sector": i + 1,
+                "time": round(sector_time, 3),
+                "best_time": round(sector_time, 3),
+                "time_delta": 0,
+                "avg_speed": round(sector_data['speed'].mean(), 1),
+                "max_speed": round(sector_data['speed'].max(), 1),
+                "status": "equal",
+                "color": "#fbbf24"
+            })
+
+    total_time = sum(s['time'] for s in sectors)
+
+    return {
+        "lap": lap,
+        "data_source": "telemetry",
+        "sectors": sectors,
+        "total_time": round(total_time, 3),
+        "theoretical_best": round(total_time, 3),
+        "potential_gain": 0
+    }
+
+# ============================================
+# RISK HEATMAP - Spin/Lock-up Risk
+# ============================================
+@app.get("/api/risk_heatmap/{lap}")
+def get_risk_heatmap(lap: int):
+    """
+    Calculate risk zones for spin, lock-up, and other incidents.
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    risk_data = []
+    step = max(1, len(df_lap) // 100)
+
+    for i in range(0, len(df_lap), step):
+        point = df_lap.iloc[i]
+
+        speed = point['speed'] if 'speed' in point else 0
+        throttle = point['ath'] if 'ath' in point else 0
+        brake = point['pbrake_f'] if 'pbrake_f' in point else 0
+        steering = abs(point['Steering_Angle']) if 'Steering_Angle' in point else 0
+
+        # Lock-up risk: high brake + high speed + steering input
+        lockup_risk = min((brake / 100) * (speed / 200) * (1 + steering / 200) * 100, 100)
+
+        # Spin risk: high throttle + high steering + lower speed (corner exit)
+        spin_risk = min((throttle / 100) * (steering / 100) * (1 - speed / 300) * 150, 100)
+
+        # Oversteer risk: sudden steering changes + speed
+        steering_rate = 0
+        if i > 0:
+            prev_steering = df_lap.iloc[i-step]['Steering_Angle'] if 'Steering_Angle' in df_lap.columns else 0
+            steering_rate = abs(steering - abs(prev_steering))
+        oversteer_risk = min(steering_rate * (speed / 150), 100)
+
+        # Combined risk
+        total_risk = max(lockup_risk, spin_risk, oversteer_risk)
+
+        # Determine risk type
+        if total_risk == lockup_risk and lockup_risk > 30:
+            risk_type = "lock-up"
+        elif total_risk == spin_risk and spin_risk > 30:
+            risk_type = "spin"
+        elif total_risk == oversteer_risk and oversteer_risk > 30:
+            risk_type = "oversteer"
+        else:
+            risk_type = "low"
+
+        risk_data.append({
+            "distance": float(point['distance']),
+            "x": float(point['WorldPositionX']) if 'WorldPositionX' in point else 0,
+            "y": float(point['WorldPositionY']) if 'WorldPositionY' in point else 0,
+            "lockup_risk": round(lockup_risk, 1),
+            "spin_risk": round(spin_risk, 1),
+            "oversteer_risk": round(oversteer_risk, 1),
+            "total_risk": round(total_risk, 1),
+            "risk_type": risk_type,
+            "speed": round(speed, 1),
+            "brake": round(brake, 1),
+            "throttle": round(throttle, 1)
+        })
+
+    # Find high risk zones
+    high_risk_zones = [r for r in risk_data if r['total_risk'] > 50]
+    critical_zones = [r for r in risk_data if r['total_risk'] > 75]
+
+    # Risk summary
+    avg_risk = sum(r['total_risk'] for r in risk_data) / len(risk_data) if risk_data else 0
+    max_risk = max(r['total_risk'] for r in risk_data) if risk_data else 0
+
+    return {
+        "lap": lap,
+        "risk_summary": {
+            "average_risk": round(avg_risk, 1),
+            "max_risk": round(max_risk, 1),
+            "high_risk_zones": len(high_risk_zones),
+            "critical_zones": len(critical_zones)
+        },
+        "risk_data": risk_data,
+        "high_risk_points": high_risk_zones[:15],
+        "recommendation": "Safe driving" if avg_risk < 30 else "Moderate risk - stay focused" if avg_risk < 50 else "High risk - reduce aggression"
+    }
+
+# ============================================
+# TIRE STRESS SCORE
+# ============================================
+@app.get("/api/tire_stress/{lap}")
+def get_tire_stress(lap: int):
+    """
+    Estimate tire stress/wear based on driving inputs and track position.
+    """
+    df = load_telemetry()
+    weather = load_weather()
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Weather impact
+    track_temp = 35
+    if not weather.empty:
+        w = weather.iloc[0]
+        track_temp = float(w.get('track_temp', w.get('TrackTemp', 35)))
+
+    # Temperature wear multiplier (higher temp = more wear)
+    temp_multiplier = 1 + (track_temp - 30) * 0.02
+
+    tire_data = []
+    cumulative_stress = {"FL": 0, "FR": 0, "RL": 0, "RR": 0}
+    step = max(1, len(df_lap) // 100)
+
+    for i in range(0, len(df_lap), step):
+        point = df_lap.iloc[i]
+
+        speed = point['speed'] if 'speed' in point else 0
+        throttle = point['ath'] if 'ath' in point else 0
+        brake = point['pbrake_f'] if 'pbrake_f' in point else 0
+        steering = point['Steering_Angle'] if 'Steering_Angle' in point else 0
+
+        # Lateral stress from cornering
+        lateral_stress = abs(steering) * (speed / 150) * 0.5
+
+        # Longitudinal stress from acceleration/braking
+        accel_stress = throttle * (speed / 200) * 0.3
+        brake_stress = brake * 0.8
+
+        # Per-tire stress calculation
+        if steering > 0:  # Right turn - more stress on left tires
+            fl_stress = lateral_stress * 1.2 + brake_stress * 0.6
+            fr_stress = lateral_stress * 0.8 + brake_stress * 0.6
+            rl_stress = lateral_stress * 1.0 + accel_stress * 0.6
+            rr_stress = lateral_stress * 0.6 + accel_stress * 0.6
+        else:  # Left turn - more stress on right tires
+            fl_stress = lateral_stress * 0.8 + brake_stress * 0.6
+            fr_stress = lateral_stress * 1.2 + brake_stress * 0.6
+            rl_stress = lateral_stress * 0.6 + accel_stress * 0.6
+            rr_stress = lateral_stress * 1.0 + accel_stress * 0.6
+
+        # Apply temperature multiplier
+        fl_stress *= temp_multiplier
+        fr_stress *= temp_multiplier
+        rl_stress *= temp_multiplier
+        rr_stress *= temp_multiplier
+
+        # Cumulative stress (simulated wear)
+        cumulative_stress["FL"] += fl_stress * 0.01
+        cumulative_stress["FR"] += fr_stress * 0.01
+        cumulative_stress["RL"] += rl_stress * 0.01
+        cumulative_stress["RR"] += rr_stress * 0.01
+
+        tire_data.append({
+            "distance": float(point['distance']),
+            "instant_stress": {
+                "FL": round(fl_stress, 1),
+                "FR": round(fr_stress, 1),
+                "RL": round(rl_stress, 1),
+                "RR": round(rr_stress, 1)
+            },
+            "cumulative_wear": {
+                "FL": round(cumulative_stress["FL"], 2),
+                "FR": round(cumulative_stress["FR"], 2),
+                "RL": round(cumulative_stress["RL"], 2),
+                "RR": round(cumulative_stress["RR"], 2)
+            }
+        })
+
+    # Final tire condition estimate (100 = new, 0 = worn out)
+    max_wear = max(cumulative_stress.values())
+    tire_condition = {
+        "FL": round(max(0, 100 - cumulative_stress["FL"]), 1),
+        "FR": round(max(0, 100 - cumulative_stress["FR"]), 1),
+        "RL": round(max(0, 100 - cumulative_stress["RL"]), 1),
+        "RR": round(max(0, 100 - cumulative_stress["RR"]), 1)
+    }
+
+    # Most stressed tire
+    most_stressed = max(cumulative_stress, key=cumulative_stress.get)
+
+    # Pit recommendation
+    avg_condition = sum(tire_condition.values()) / 4
+    if avg_condition < 30:
+        pit_recommendation = "Pit NOW - Critical tire wear"
+    elif avg_condition < 50:
+        pit_recommendation = "Consider pitting soon"
+    elif avg_condition < 70:
+        pit_recommendation = "Tires holding up - monitor closely"
+    else:
+        pit_recommendation = "Tires in good condition"
+
+    return {
+        "lap": lap,
+        "track_temp": track_temp,
+        "temp_multiplier": round(temp_multiplier, 2),
+        "tire_condition": tire_condition,
+        "cumulative_stress": {k: round(v, 2) for k, v in cumulative_stress.items()},
+        "most_stressed_tire": most_stressed,
+        "average_condition": round(avg_condition, 1),
+        "pit_recommendation": pit_recommendation,
+        "tire_data": tire_data[::2]  # Every other point to reduce data
+    }
+
+# ============================================
+# LAP TIME PREDICTION - ML XGBoost
+# ============================================
+@app.get("/api/predict_laptime/{lap}")
+def predict_lap_time(lap: int):
+    """
+    Predict lap time using trained XGBoost model.
+    Also provides feature importance for improvement suggestions.
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Calculate actual lap time
+    actual_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+
+    # Try ML prediction
+    if ml_models['lap_predictor'] is not None:
+        try:
+            predicted_time = ml_models['lap_predictor'].predict_from_telemetry(df_lap)
+            suggestions = ml_models['lap_predictor'].get_improvement_suggestions(df_lap)
+            feature_importance = dict(list(ml_models['lap_predictor'].feature_importance.items())[:10])
+
+            return {
+                "lap": lap,
+                "prediction_method": "ML_XGBoost",
+                "actual_time": round(actual_time, 3),
+                "predicted_time": round(predicted_time, 3),
+                "prediction_error": round(abs(actual_time - predicted_time), 3),
+                "feature_importance": feature_importance,
+                "improvement_suggestions": suggestions
+            }
+        except Exception as e:
+            print(f"ML prediction failed: {e}")
+
+    # Fallback - return actual time only
+    return {
+        "lap": lap,
+        "prediction_method": "not_available",
+        "actual_time": round(actual_time, 3),
+        "predicted_time": None,
+        "message": "ML model not trained. Run train_models.py first."
+    }
+
+# ============================================
+# ML MODEL STATUS
+# ============================================
+@app.get("/api/ml_status")
+def get_ml_status():
+    """Get status of loaded ML models."""
+    return {
+        "ml_available": ML_AVAILABLE,
+        "models": {
+            "anomaly_detector": {
+                "loaded": ml_models['anomaly_detector'] is not None,
+                "type": "Isolation Forest" if ml_models['anomaly_detector'] else None
+            },
+            "lap_predictor": {
+                "loaded": ml_models['lap_predictor'] is not None,
+                "type": "XGBoost/GradientBoosting" if ml_models['lap_predictor'] else None
+            },
+            "driver_clusterer": {
+                "loaded": ml_models['driver_clusterer'] is not None,
+                "type": "K-Means Clustering" if ml_models['driver_clusterer'] else None
+            }
+        },
+        "models_dir": MODELS_DIR
+    }
+
+@app.post("/api/chat")
+def chat(request: ChatRequest):
+    if not groq_client:
+        return {"response": "AI assistant not configured. Set GROQ_API_KEY.", "plot_type": None}
+
+    df = load_telemetry()
+    context = ""
+
+    if not df.empty:
+        if request.lap:
+            df_lap = df[df['lap'] == request.lap]
+        else:
+            df_lap = df
+
+        if not df_lap.empty:
+            context = f"""
+Current Telemetry Summary:
+- Max Speed: {df_lap['speed'].max():.1f} km/h
+- Avg Speed: {df_lap['speed'].mean():.1f} km/h
+- Max RPM: {df_lap['nmot'].max():.0f}
+- Avg Throttle: {df_lap['ath'].mean():.1f}%
+- Max Brake: {df_lap['pbrake_f'].max():.1f}
+"""
+
+    system_prompt = """You are GR-Pilot, an AI race engineer assistant for Toyota GR Cup Series.
+Provide concise, data-driven analysis. Focus on speed, RPM, throttle, braking, and steering.
+Keep responses brief and professional."""
+
+    try:
+        response = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context + "\nQuestion: " + request.message}
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            max_tokens=300,
+        )
+        text = response.choices[0].message.content
+
+        # Determine plot type
+        msg_lower = request.message.lower()
+        plot_type = None
+        if "speed" in msg_lower:
+            plot_type = "speed"
+        elif "rpm" in msg_lower or "engine" in msg_lower:
+            plot_type = "rpm"
+        elif "brake" in msg_lower:
+            plot_type = "brake"
+        elif "throttle" in msg_lower:
+            plot_type = "throttle"
+
+        return {"response": text, "plot_type": plot_type}
+    except Exception as e:
+        return {"response": f"Error: {str(e)}", "plot_type": None}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

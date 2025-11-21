@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+  min-height: 100vh;
+  color: white;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #EB0A1E;
+  border-radius: 4px;
+}
+
+.glow-red {
+  box-shadow: 0 0 20px rgba(235, 10, 30, 0.5);
+}
+
+.glow-text {
+  text-shadow: 0 0 10px rgba(235, 10, 30, 0.8);
+}
+
+@keyframes racing-stripes {
+  0% { background-position: 0 0; }
+  100% { background-position: 50px 0; }
+}
+
+.racing-stripes {
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 10px,
+    rgba(235, 10, 30, 0.1) 10px,
+    rgba(235, 10, 30, 0.1) 20px
+  );
+  animation: racing-stripes 1s linear infinite;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.gauge-ring {
+  stroke-dasharray: 283;
+  stroke-dashoffset: 283;
+  transition: stroke-dashoffset 0.5s ease;
+}
