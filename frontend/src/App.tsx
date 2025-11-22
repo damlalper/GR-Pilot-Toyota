@@ -17,6 +17,9 @@ import {
   SectorAnalysis,
   RiskHeatmap,
   TireStress,
+  CompositePerformanceIndex,
+  PitStrategy,
+  RaceStoryTimeline,
 } from './components';
 import { LayoutGrid, GitCompare, BarChart3 } from 'lucide-react';
 
@@ -86,6 +89,12 @@ function App() {
                 <Scene3D />
               </div>
 
+              {/* Quick CPI Overview */}
+              <div className="grid grid-cols-2 gap-4">
+                <CompositePerformanceIndex />
+                <PitStrategy />
+              </div>
+
               {/* Charts */}
               <TelemetryCharts />
             </div>
@@ -104,10 +113,17 @@ function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             {/* Left Column - Anomalies & Suggestions */}
             <div className="lg:col-span-8 space-y-4">
+              {/* NEW: CPI (Composite Performance Index) */}
+              <CompositePerformanceIndex />
+
               <div className="grid grid-cols-2 gap-4">
                 <DriverDNA />
                 <GripIndex />
               </div>
+
+              {/* NEW: Race Story Timeline */}
+              <RaceStoryTimeline />
+
               <SectorAnalysis />
               <AnomalyOverlay />
               <SuggestionsPanel />
@@ -117,6 +133,10 @@ function App() {
             {/* Right Column */}
             <div className="lg:col-span-4 space-y-4">
               <TelemetryPanel />
+
+              {/* NEW: Pit Strategy Simulator */}
+              <PitStrategy />
+
               <RiskHeatmap />
               <TireStress />
               <TrackMap />

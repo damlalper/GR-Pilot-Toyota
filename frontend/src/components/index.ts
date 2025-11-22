@@ -17,3 +17,6 @@ export { GripIndex } from './GripIndex';
 export { SectorAnalysis } from './SectorAnalysis';
 export { RiskHeatmap } from './RiskHeatmap';
 export { TireStress } from './TireStress';
+export { CompositePerformanceIndex } from './CompositePerformanceIndex';
+export { PitStrategy } from './PitStrategy';
+export { RaceStoryTimeline } from './RaceStoryTimeline';

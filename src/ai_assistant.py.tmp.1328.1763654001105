@@ -1,0 +1,141 @@
+from gtts import gTTS
+import tempfile
+from groq import Groq
+import plotly.express as px
+import pandas as pd
+import streamlit as st # Import streamlit to access st.secrets
+
+# Initialize Groq client using the API key from Streamlit secrets
+groq_api_key = None
+try:
+    groq_api_key = st.secrets["GROQ_API_KEY"]
+except KeyError:
+    st.error("GROQ_API_KEY not found in Streamlit secrets. Please add it to .streamlit/secrets.toml")
+
+client = None
+if groq_api_key:
+    client = Groq(api_key=groq_api_key)
+else:
+    print("WARNING: GROQ_API_KEY not found. The AI assistant will be disabled.")
+
+def generate_audio(text):
+    """
+    Generates an audio file from text using gTTS.
+    Returns the path to the temporary file.
+    """
+    try:
+        tts = gTTS(text=text, lang='en')
+        # Create a temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            tts.save(fp.name)
+            return fp.name
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        return None
+
+def query_ai(df, question, df_ref=None, weather_df=None):
+    """
+    Queries the Groq API for insights based on telemetry data.
+    Returns a dictionary: {"text": str, "plot": plotly.Figure (optional)}
+    """
+    response = {"text": "", "plot": None}
+
+    if df is None or df.empty:
+        response["text"] = "I need data to answer that. Please load the telemetry first."
+        return response
+
+    if client is None:
+        response["text"] = "AI assistant is not available. Please check the GROQ_API_KEY in .streamlit/secrets.toml"
+        return response
+    
+    system_prompt = """You are GR-Pilot, an AI-powered race engineer assistant for the Toyota GR Cup Series. 
+    Your goal is to provide insightful, data-driven analysis and strategic recommendations to a race car driver or engineer.
+    Analyze the provided telemetry data and context to answer questions, explain performance differences, and suggest improvements.
+    Focus on key metrics like speed, RPM, throttle, braking, and steering.
+    When comparing laps, highlight specific areas of gain or loss.
+    Keep your responses concise, professional, and directly relevant to motorsport performance.
+    If you cannot fully answer a question, acknowledge it and suggest what kind of data would be needed.
+    """
+
+    context_string = "### Current Lap Telemetry Data Summary:\n"
+    if not df.empty:
+        context_string += f"- Lap Length: {df['distance'].max():.2f} meters\n"
+        context_string += f"- Max Speed: {df['speed'].max():.2f} km/h\n"
+        context_string += f"- Avg Speed: {df['speed'].mean():.2f} km/h\n"
+        if 'nmot' in df.columns: context_string += f"- Max RPM: {df['nmot'].max():.0f}\n"
+        if 'ath' in df.columns: context_string += f"- Avg Throttle: {df['ath'].mean():.1f}%\n"
+        if 'pbrake_f' in df.columns: context_string += f"- Max Brake Pressure (Front): {df['pbrake_f'].max():.1f}\n"
+        if 'Steering_Angle' in df.columns: context_string += f"- Max Steering Angle: {df['Steering_Angle'].abs().max():.1f} deg\n"
+        # Add a snippet of raw data for more detail if needed by the LLM
+        context_string += "First 5 rows of current lap telemetry:\n"
+        context_string += df[['distance', 'speed', 'nmot', 'ath', 'pbrake_f', 'Steering_Angle']].head().to_markdown(index=False) + "\n\n"
+
+    if df_ref is not None and not df_ref.empty:
+        context_string += "### Reference Lap Telemetry Data Summary:\n"
+        context_string += f"- Lap Length: {df_ref['distance'].max():.2f} meters\n"
+        context_string += f"- Max Speed: {df_ref['speed'].max():.2f} km/h\n"
+        context_string += f"- Avg Speed: {df_ref['speed'].mean():.2f} km/h\n"
+        if 'nmot' in df_ref.columns: context_string += f"- Max RPM: {df_ref['nmot'].max():.0f}\n"
+        if 'ath' in df_ref.columns: context_string += f"- Avg Throttle: {df_ref['ath'].mean():.1f}%\n"
+        if 'pbrake_f' in df_ref.columns: context_string += f"- Max Brake Pressure (Front): {df_ref['pbrake_f'].max():.1f}\n"
+        if 'Steering_Angle' in df_ref.columns: context_string += f"- Max Steering Angle: {df_ref['Steering_Angle'].abs().max():.1f} deg\n"
+        context_string += "First 5 rows of reference lap telemetry:\n"
+        context_string += df_ref[['distance', 'speed', 'nmot', 'ath', 'pbrake_f', 'Steering_Angle']].head().to_markdown(index=False) + "\n\n"
+
+    if weather_df is not None and not weather_df.empty:
+        context_string += "### Weather Conditions:\n"
+        # Assuming weather_df has a simple structure, grab first row
+        weather_summary = weather_df.iloc[0].to_dict()
+        context_string += pd.DataFrame([weather_summary]).to_markdown(index=False) + "\n\n"
+
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_string + "User's question: " + question}
+            ],
+            model="llama3-8b-8192", # Or mixtral-8x7b-32768, for instance
+            temperature=0.7,
+            max_tokens=500,
+        )
+        groq_response_text = chat_completion.choices[0].message.content
+        response["text"] = groq_response_text
+
+        # --- Conditional Plotting (retained from mock for now) ---
+        # This part could be enhanced to have the LLM suggest plots,
+        # but for a first iteration, we keep the rule-based approach.
+        question_lower = question.lower()
+        if "speed" in question_lower:
+            if df_ref is not None and not df_ref.empty:
+                fig = px.line(df, x='distance', y='speed', title='Speed Comparison')
+                fig.add_scatter(x=df_ref['distance'], y='speed', mode='lines', name='Reference', line=dict(dash='dot', color='white'), showlegend=True)
+            else:
+                fig = px.line(df, x='distance', y='speed', title='Speed Trace')
+            response["plot"] = fig
+        elif "rpm" in question_lower or "engine" in question_lower:
+            fig = px.line(df, x='distance', y='nmot', title='RPM Trace')
+            if df_ref is not None and not df_ref.empty:
+                fig.add_scatter(x=df_ref['distance'], y='nmot', mode='lines', name='Reference', line=dict(dash='dot', color='white'), showlegend=True)
+            response["plot"] = fig
+        elif "brake" in question_lower and 'pbrake_f' in df.columns:
+            fig = px.line(df, x='distance', y='pbrake_f', title='Brake Pressure (Front)')
+            if df_ref is not None and not df_ref.empty and 'pbrake_f' in df_ref.columns:
+                fig.add_scatter(x=df_ref['distance'], y='pbrake_f', mode='lines', name='Reference', line=dict(dash='dot', color='white'), showlegend=True)
+            response["plot"] = fig
+        elif "throttle" in question_lower and 'ath' in df.columns:
+            fig = px.line(df, x='distance', y='ath', title='Throttle Position')
+            if df_ref is not None and not df_ref.empty and 'ath' in df_ref.columns:
+                fig.add_scatter(x=df_ref['distance'], y='ath', mode='lines', name='Reference', line=dict(dash='dot', color='white'), showlegend=True)
+            response["plot"] = fig
+        elif "steering" in question_lower and 'Steering_Angle' in df.columns:
+            fig = px.line(df, x='distance', y='Steering_Angle', title='Steering Angle Trace')
+            if df_ref is not None and not df_ref.empty and 'Steering_Angle' in df_ref.columns:
+                fig.add_scatter(x=df_ref['distance'], y='Steering_Angle', mode='lines', name='Reference', line=dict(dash='dot', color='white'), showlegend=True)
+            response["plot"] = fig
+        # --- End Conditional Plotting ---
+
+    except Exception as e:
+        response["text"] = f"An error occurred while consulting the AI: {e}"
+        print(f"Groq API Error: {e}")
+        
+    return response

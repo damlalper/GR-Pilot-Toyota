@@ -1,0 +1,141 @@
+✅ LLM Değerlendirme Promptu (Toyota TRD Hackathon)
+
+bu proje toyota yarışması için yapılmıştır. yarışma bilgileri şu dosyada anlatılmıştır. yarışmayı anlamak için pdfi okumalısın.
+C:\Users\Lenovo\Desktop\hackathons\TOYOTA\Hack the Track presented by Toyota GR.md
+
+Aşağıdaki kriterlere göre projeyi değerlendirmeni istiyorum.
+Her kriter için net, mühendisçe ve objektif yorumlar üret.
+Gerekirse öneri, hata, eksik, geliştirme alanı belirt.
+
+🎯 1. Application of the TRD Datasets (Zorunlu)
+
+Projeyi şu kurallara göre değerlendir:
+
+TRD datasetleri projede gerçekten kullanılmış olmalı
+
+Kullanım etkili, teknik olarak anlamlı ve kategoriyle uyumlu olmalı
+
+Veri sadece görselleştirilmemeli; yorumlanmalı, analiz edilmeli, bir probleme çözüm sunmalı
+
+Proje datasetleri benzersiz, akıllı veya yaratıcı bir şekilde kullanmış olmalı
+
+“Sadece hız grafiği çizdik” seviyesinde olmamalı
+
+Mümkünse birden fazla data channel birlikte kullanılmalı (örn. speed + throttle + brake + steering)
+
+Bu kriterlere göre değerlendirme yap.
+
+🎨 2. Design (UX/UI + Frontend/Backend Dengesi)
+
+Değerlendirirken şunu uygula:
+
+Kullanıcı deneyimi akıcı, anlaşılır ve profesyonel olmalı
+
+Arayüz sadece güzel değil; mühendis için işlevsel olmalı
+
+Ön yüz (UI/UX) ile arka yüz (data processing, analysis) dengeli bir şekilde bütünleşmiş olmalı
+
+Tasarım yarış temalı, tutarlı ve kullanıcı odaklı olmalı
+
+Gereksiz karışıklık veya bilgi kalabalığı olmamalı
+
+"Design for performance engineering" mindset’i değerlendirmeye dahil et
+
+Bu maddeye göre yorum yap.
+
+🚀 3. Potential Impact
+
+Şu noktaları değerlendirmene ekle:
+
+Proje Toyota Racing topluluğuna pratik bir katkı sağlıyor mu?
+
+Profesyonel mühendisler veya amatör sürücüler için gerçek bir fark yaratabilir mi?
+
+Toyota ekosistemine ölçeklenebilir bir fayda sağlayabilir mi?
+
+Topluluk dışına taşarak motorsporları veya otomotiv sektöründe geniş etki potansiyeli var mı?
+
+Sadece gösterişli değil, gerçek bir problem çözüyor mu?
+
+Bu doğrultuda etkisini analiz et.
+
+💡 4. Quality of the Idea
+
+Aşağıdaki kriterlerle değerlendir:
+
+Fikir yaratıcı, özgün ve gerçek bir ihtiyaçtan doğmuş olmalı
+
+Eğer konsept benzer çözümlere sahipse:
+
+Bu proje onlardan nasıl daha iyi?
+
+Ne yenilik getiriyor?
+
+Hangi açığı kapatıyor?
+
+Sadece teknoloji kullanmak için değil; iyi çözümlenmiş, akıllı bir fikir olmalı
+
+Ürünün vizyonunun ne kadar güçlü olduğunu değerlendir
+
+Bu maddeye göre genel bir kalite değerlendirmesi yap.
+
+📌 Çıktı Formatı
+
+Çıktını şu formatta üret:
+
+Application of TRD Datasets → (yorum)
+
+Design → (yorum)
+
+Potential Impact → (yorum)
+
+Quality of the Idea → (yorum)
+
+En sonda:
+Genel Değerlendirme (5–8 cümle)
+Projenin güçlü yanlarını, zayıf yanlarını ve jüri perspektifinden genel izlenimini özetle.
+
+
+
+
+
+GEMİNİ:
+Application of TRD Datasets → Projenin TRD veri setlerini uygulaması örnek niteliğindedir. Telemetri, zamanlama ve hava    
+  durumu verilerini gelişmiş bir makine öğrenmesi hattına derinlemesine entegre ederek basit görselleştirmenin çok ötesine   
+  geçiyor. Çoklu veri kanalları (hız, gaz, fren, direksiyon vb.) sadece çizilmekle kalmıyor, aynı zamanda temel analitiği    
+  güçlendiren 50'den fazla yeni özellik tasarlamak için kullanılıyor. Örneğin, dinamik bir 'Grip Index' oluşturmak için hava 
+  durumu verilerini telemetri ile birleştiriyor ve 'Pit Strateji Simülatörü' için telemetriden türetilen aşınma oranlarını   
+  kullanıyor. Bu, gerçek dünyadaki yarış problemlerini çözmek için verilerin teknik olarak anlamlı ve yaratıcı bir şekilde   
+  kullanılmasını temsil etmektedir.
+
+  Design → Tasarım, kullanıcı arayüzü ve ağır veri işleme arasında net bir ayrım sağlayan bir React ön yüzü ve bir
+  Python/FastAPI arka yüzü ile modern, sağlam bir mimariyi takip ediyor. Kullanıcı deneyimi son derece işlevsel ve bir yarış 
+  mühendisi için özel olarak tasarlanmış. Kullanıcı arayüzü, üst düzey bir genel bakıştan ayrıntılı, derinlemesine analize   
+  sorunsuz bir geçişe olanak tanıyan mantıksal görünümlere ('Yarış', 'Analiz', 'Karşılaştır') göre yapılandırılmıştır.       
+  'Performans mühendisliği için tasarım' zihniyeti belirgindir; gösterge paneli sadece bir grafik koleksiyonu değil,
+  'Bileşik Performans Endeksi' ve 'Sürücü DNA'sı' gibi bileşenlerin karmaşık analizleri sindirilebilir bir formatta sunduğu  
+  entegre bir araçtır.
+
+  Potential Impact → Projenin Toyota Yarış topluluğu için çok yüksek bir potansiyel etkisi var. Hackathon'un yarış günü      
+  karar verme sürecini geliştirecek bir araç yaratma hedefine doğrudan hitap ediyor. Profesyonel bir mühendis için,
+  anormallikleri işaretlemek ve kilit stratejik anları belirlemek için saatlerce süren veri analizini otomatikleştiren bir  █
+  yapay zeka asistanı görevi görür. Bir sürücü için, 'Sürücü DNA'sı' profili ve tur zamanı tahmincisi gibi özellikler       █
+  aracılığıyla kişiselleştirilmiş ve eyleme geçirilebilir geri bildirim sağlar. GR Cup Serisi için gerçek zamanlı bir       ▀
+  stratejik araca dönüştürülme potansiyeli önemlidir ve somut bir rekabet avantajı sunar.
+
+  Quality of the Idea → Bir "Yapay Zeka Yarış Mühendisi" yaratma temel fikri hem orijinal hem de güçlüdür. Telemetri
+  görüntüleyiciler mevcut olsa da, bu projenin yeniliği proaktif, öngörücü ve tavsiye edici doğasında yatmaktadır. Sadece    
+  veri sunmak yerine, stratejik tavsiyeler sunmak (Pit Strateji Simülatörü), performansı sınıflandırmak (Sürücü DNA'sı) ve   
+  bütünsel bir performans puanı sağlamak (Bileşik Performans Endeksi) için onu yorumlar. Vizyon, yüksek basınçlı bir yarış   
+  ortamında daha hızlı, daha otomatik ve daha derin veri içgörülerine yönelik gerçek ihtiyacı çözmeyi amaçlayan güçlü ve iyi 
+  uygulanmış bir vizyondur.
+
+  Genel Değerlendirme
+  Proje, ham yarış verilerini eyleme geçirilebilir stratejik zekaya dönüştürme konusunda teknik olarak derin ve bütüncül bir 
+  yaklaşım sergiliyor. En büyük gücü, telemetri, zamanlama ve hava durumu gibi farklı veri kaynaklarını birleştirerek        
+  "Driver DNA" ve "Pit Strategy Simulator" gibi özgün ve katma değerli analitik özellikler üretmesidir. Zayıf yanı olarak,   
+  bu kadar karmaşık bir sistemin gerçek zamanlı olarak ne kadar akıcı çalışacağı ve canlı yarış verisiyle entegrasyonunun ne 
+  kadar pürüzsüz olacağı daha fazla test gerektirebilir. Jüri perspektifinden bakıldığında, proje sadece bir veri
+  görselleştirme aracının çok ötesine geçerek, bir yarış mühendisinin karar verme süreçlerini otomatize eden ve
+  zenginleştiren yapay zeka tabanlı bir asistan olarak öne çıkıyor. Bu, hem teknik yetkinlik hem de motorsporları alanındaki▄
+  pratik ihtiyacı karşılama potansiyeli açısından oldukça etkileyici bir çalışma.   

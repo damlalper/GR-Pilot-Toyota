@@ -1263,6 +1263,595 @@ def predict_lap_time(lap: int):
     }
 
 # ============================================
+# COMPOSITE PERFORMANCE INDEX (CPI)
+# ============================================
+@app.get("/api/cpi/{lap}")
+def get_composite_performance_index(lap: int):
+    """
+    Calculate Composite Performance Index (CPI) - Toyota's ultimate performance metric.
+    Combines multiple telemetry channels into a single performance score (0-100).
+
+    CPI Formula:
+    - Speed Score (30%): How close to optimal speed
+    - Brake Efficiency (20%): Smooth, late braking
+    - Throttle Smoothness (15%): Progressive application
+    - Tire Stress (15%): Minimizing tire degradation
+    - Turn Entry Accuracy (10%): Optimal corner entry
+    - Sector Consistency (10%): Lap-to-lap variation
+    """
+    df = load_telemetry()
+    weather = load_weather()
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # 1. SPEED SCORE (30%) - Compare to theoretical maximum
+    max_possible_speed = 280  # km/h for GR Cup
+    avg_speed = df_lap['speed'].mean()
+    speed_efficiency = (avg_speed / max_possible_speed) * 100
+    speed_score = min(speed_efficiency * 1.2, 100)  # Boost for high speeds
+
+    # 2. BRAKE EFFICIENCY (20%) - Late braking, smooth release
+    brake_data = df_lap['pbrake_f'] if 'pbrake_f' in df_lap.columns else pd.Series([0]*len(df_lap))
+    brake_events = (brake_data > 30).sum()
+    total_points = len(df_lap)
+    brake_time_pct = (brake_events / total_points) * 100
+
+    # Lower brake time = better (optimal ~15-20%)
+    if brake_time_pct < 10:
+        brake_efficiency_score = 60  # Too little braking - missing apexes
+    elif brake_time_pct < 20:
+        brake_efficiency_score = 100  # Optimal
+    elif brake_time_pct < 30:
+        brake_efficiency_score = 80
+    else:
+        brake_efficiency_score = 50  # Over-braking
+
+    # Brake smoothness
+    brake_smoothness = 100 - min(brake_data.diff().abs().mean() * 2, 50)
+    brake_score = (brake_efficiency_score * 0.6 + brake_smoothness * 0.4)
+
+    # 3. THROTTLE SMOOTHNESS (15%) - Progressive application
+    throttle_data = df_lap['ath'] if 'ath' in df_lap.columns else pd.Series([0]*len(df_lap))
+    throttle_variance = throttle_data.std()
+    throttle_avg = throttle_data.mean()
+
+    # Penalize erratic throttle
+    throttle_smoothness = 100 - min(throttle_variance, 40)
+    # Reward high average throttle
+    throttle_usage = min((throttle_avg / 80) * 100, 100)
+    throttle_score = (throttle_smoothness * 0.5 + throttle_usage * 0.5)
+
+    # 4. TIRE STRESS (15%) - Minimize wear
+    steering_data = df_lap['Steering_Angle'] if 'Steering_Angle' in df_lap.columns else pd.Series([0]*len(df_lap))
+    speed_data = df_lap['speed']
+
+    # Calculate lateral stress
+    lateral_stress = (steering_data.abs() * (speed_data / 150)).mean()
+    tire_stress_score = max(100 - lateral_stress * 2, 0)
+
+    # 5. TURN ENTRY ACCURACY (10%) - Smooth steering transitions
+    steering_corrections = (steering_data.diff().abs() > 5).sum()
+    correction_penalty = (steering_corrections / total_points) * 1000
+    turn_entry_score = max(100 - correction_penalty, 0)
+
+    # 6. SECTOR CONSISTENCY (10%) - Check variance across sectors
+    max_distance = df_lap['distance'].max()
+    sector_length = max_distance / 3
+    sector_times = []
+
+    for i in range(3):
+        start_dist = i * sector_length
+        end_dist = (i + 1) * sector_length
+        sector_data = df_lap[(df_lap['distance'] >= start_dist) & (df_lap['distance'] < end_dist)]
+        if len(sector_data) >= 2:
+            sector_time = (sector_data['timestamp'].max() - sector_data['timestamp'].min()).total_seconds()
+            sector_times.append(sector_time)
+
+    if len(sector_times) == 3:
+        sector_variance = np.std(sector_times)
+        consistency_score = max(100 - sector_variance * 10, 0)
+    else:
+        consistency_score = 50
+
+    # CALCULATE WEIGHTED CPI
+    cpi_score = (
+        speed_score * 0.30 +
+        brake_score * 0.20 +
+        throttle_score * 0.15 +
+        tire_stress_score * 0.15 +
+        turn_entry_score * 0.10 +
+        consistency_score * 0.10
+    )
+
+    # CPI Rating
+    if cpi_score >= 85:
+        rating = "Elite Performance"
+        color = "#22c55e"
+    elif cpi_score >= 75:
+        rating = "Excellent"
+        color = "#3b82f6"
+    elif cpi_score >= 65:
+        rating = "Good"
+        color = "#fbbf24"
+    elif cpi_score >= 50:
+        rating = "Average"
+        color = "#f97316"
+    else:
+        rating = "Needs Improvement"
+        color = "#ef4444"
+
+    # Component breakdown for visualization
+    components = {
+        "Speed Efficiency": round(speed_score, 1),
+        "Brake Efficiency": round(brake_score, 1),
+        "Throttle Smoothness": round(throttle_score, 1),
+        "Tire Management": round(tire_stress_score, 1),
+        "Turn Entry": round(turn_entry_score, 1),
+        "Consistency": round(consistency_score, 1)
+    }
+
+    # Top 3 strengths and weaknesses
+    sorted_components = sorted(components.items(), key=lambda x: x[1], reverse=True)
+    strengths = [{"metric": k, "score": v} for k, v in sorted_components[:3]]
+    weaknesses = [{"metric": k, "score": v} for k, v in sorted_components[-3:]]
+
+    return {
+        "lap": lap,
+        "cpi_score": round(cpi_score, 1),
+        "rating": rating,
+        "color": color,
+        "components": components,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "recommendations": [
+            f"Focus on {weaknesses[0]['metric']} to improve CPI by ~{round((100-weaknesses[0]['score'])*0.1, 1)} points"
+            if weaknesses[0]['score'] < 70 else "Maintain current performance level",
+            f"Excellent {strengths[0]['metric']} - keep this consistent"
+        ]
+    }
+
+# ============================================
+# REAL-TIME STRATEGY SIMULATION (PIT WINDOW)
+# ============================================
+@app.get("/api/pit_strategy/{lap}")
+def get_pit_strategy(lap: int, race_laps: int = 30, fuel_capacity: float = 60.0):
+    """
+    Real-time pit stop strategy simulator - answers "When should I pit?"
+
+    Uses REAL telemetry data to calculate:
+    - Tire degradation rate (from speed loss over laps)
+    - Fuel consumption (from throttle usage + lap times)
+    - Optimal pit window
+    - Overcut/Undercut scenarios
+    - Caution (yellow flag) opportunities
+
+    This is NOT post-race analysis - this is RACE ENGINEERING.
+    """
+    df = load_telemetry()
+    weather = load_weather()
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    # Get all laps up to current
+    available_laps = sorted(df['lap'].unique())
+    completed_laps = [l for l in available_laps if l <= lap]
+
+    if not completed_laps:
+        raise HTTPException(status_code=404, detail="No lap data")
+
+    # 1. TIRE DEGRADATION ANALYSIS
+    lap_times = []
+    lap_speeds = []
+
+    for lap_num in completed_laps[-10:]:  # Last 10 laps for trend
+        df_lap = df[df['lap'] == lap_num].copy()
+        if len(df_lap) > 10:
+            lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+            avg_speed = df_lap['speed'].mean()
+            lap_times.append({"lap": lap_num, "time": lap_time, "avg_speed": avg_speed})
+            lap_speeds.append(avg_speed)
+
+    # Calculate tire degradation rate (speed loss per lap)
+    if len(lap_speeds) >= 3:
+        # Linear regression for degradation
+        tire_deg_rate = (lap_speeds[0] - lap_speeds[-1]) / len(lap_speeds)
+        tire_deg_pct = (tire_deg_rate / lap_speeds[0]) * 100 if lap_speeds[0] > 0 else 0
+    else:
+        tire_deg_rate = 0.5  # Default estimate
+        tire_deg_pct = 0.3
+
+    # Tire condition estimate (100 = new, 0 = critical)
+    laps_on_tires = lap  # Assuming start with new tires
+    tire_condition = max(0, 100 - (laps_on_tires * abs(tire_deg_pct)))
+
+    # 2. FUEL CONSUMPTION ANALYSIS
+    df_current_lap = df[df['lap'] == lap].copy()
+    if not df_current_lap.empty:
+        avg_throttle = df_current_lap['ath'].mean() if 'ath' in df_current_lap.columns else 70
+        lap_distance = df_current_lap['distance'].max() - df_current_lap['distance'].min()
+    else:
+        avg_throttle = 70
+        lap_distance = 5600  # COTA lap length in meters
+
+    # Fuel consumption model (higher throttle = more fuel)
+    # Estimate: ~2L per lap at 70% throttle, scales with throttle usage
+    fuel_per_lap = 2.0 * (avg_throttle / 70)
+    fuel_remaining = fuel_capacity - (lap * fuel_per_lap)
+    laps_of_fuel = fuel_remaining / fuel_per_lap if fuel_per_lap > 0 else 0
+
+    # 3. OPTIMAL PIT WINDOW CALCULATION
+    # Factors: tire deg, fuel, pit loss time
+    pit_loss_time = 25.0  # Seconds lost in pit (entry, stop, exit)
+
+    # When do tires become critical?
+    critical_tire_lap = int(100 / max(abs(tire_deg_pct), 0.5))  # When tire hits 0%
+    optimal_tire_lap = int(critical_tire_lap * 0.75)  # Pit at 25% tire life
+
+    # When does fuel run out?
+    fuel_critical_lap = lap + int(laps_of_fuel)
+
+    # Recommended pit window (earlier of tire or fuel need)
+    recommended_pit_lap = min(optimal_tire_lap, fuel_critical_lap - 2)
+    recommended_pit_lap = max(lap + 1, min(recommended_pit_lap, race_laps - 2))
+
+    # 4. OVERCUT/UNDERCUT SCENARIOS
+    # Undercut: Pit early, gain track position with fresh tires
+    undercut_window = recommended_pit_lap - 2
+    undercut_advantage = abs(tire_deg_rate) * 3 * 5.6  # 3 laps faster * lap distance
+
+    # Overcut: Stay out longer, hope for caution or competitors' mistakes
+    overcut_window = recommended_pit_lap + 3
+    overcut_risk = "High" if tire_condition < 30 else "Medium" if tire_condition < 50 else "Low"
+
+    # 5. CAUTION OPPORTUNITY ANALYSIS
+    # Simulate: If caution happens now, should we pit?
+    laps_to_go = race_laps - lap
+    caution_pit_value = "YES - Pit now!" if tire_condition < 60 and laps_to_go > 10 else "Hold position"
+
+    # 6. WEATHER IMPACT
+    track_temp = 35
+    if not weather.empty:
+        w = weather.iloc[0]
+        track_temp = float(w.get('track_temp', w.get('TrackTemp', 35)))
+
+    # High temp = faster tire deg
+    temp_multiplier = 1 + (track_temp - 35) * 0.02
+    adjusted_pit_lap = int(recommended_pit_lap / temp_multiplier)
+
+    # 7. STRATEGY RECOMMENDATIONS
+    strategies = []
+
+    # Strategy 1: Conservative (optimal window)
+    strategies.append({
+        "name": "Conservative",
+        "pit_lap": adjusted_pit_lap,
+        "description": "Pit at optimal tire/fuel window",
+        "pros": "Safe, predictable, maintains tire performance",
+        "cons": "May lose track position temporarily",
+        "tire_at_pit": round(100 - (adjusted_pit_lap * abs(tire_deg_pct)), 1),
+        "fuel_at_pit": round(fuel_capacity - (adjusted_pit_lap * fuel_per_lap), 1)
+    })
+
+    # Strategy 2: Undercut (aggressive)
+    if undercut_window > lap:
+        strategies.append({
+            "name": "Undercut",
+            "pit_lap": undercut_window,
+            "description": "Pit early to undercut competitors",
+            "pros": f"Gain ~{round(undercut_advantage/1000, 1)}km with fresh tires",
+            "cons": "Early tire wear in final stint",
+            "tire_at_pit": round(100 - (undercut_window * abs(tire_deg_pct)), 1),
+            "fuel_at_pit": round(fuel_capacity - (undercut_window * fuel_per_lap), 1)
+        })
+
+    # Strategy 3: Overcut (risky)
+    if overcut_window <= race_laps - 2:
+        strategies.append({
+            "name": "Overcut",
+            "pit_lap": overcut_window,
+            "description": "Stay out longer, pit after competitors",
+            "pros": "Gain track position while others pit",
+            "cons": f"Risk: {overcut_risk} - tire degradation",
+            "tire_at_pit": round(100 - (overcut_window * abs(tire_deg_pct)), 1),
+            "fuel_at_pit": round(fuel_capacity - (overcut_window * fuel_per_lap), 1)
+        })
+
+    # Final recommendation
+    if tire_condition < 20:
+        recommendation = "PIT NOW - Critical tire condition!"
+        urgency = "critical"
+    elif fuel_remaining < fuel_per_lap * 3:
+        recommendation = "PIT SOON - Low fuel warning"
+        urgency = "high"
+    elif lap >= adjusted_pit_lap - 1:
+        recommendation = f"Optimal pit window: Lap {adjusted_pit_lap}"
+        urgency = "medium"
+    else:
+        recommendation = f"Stay out - Pit window in {adjusted_pit_lap - lap} laps"
+        urgency = "low"
+
+    return {
+        "current_lap": lap,
+        "race_laps": race_laps,
+        "laps_remaining": race_laps - lap,
+        "recommendation": recommendation,
+        "urgency": urgency,
+        "optimal_pit_lap": adjusted_pit_lap,
+        "tire_analysis": {
+            "current_condition": round(tire_condition, 1),
+            "degradation_rate": round(abs(tire_deg_rate), 2),
+            "degradation_pct_per_lap": round(abs(tire_deg_pct), 2),
+            "laps_on_current_tires": laps_on_tires,
+            "estimated_critical_lap": critical_tire_lap
+        },
+        "fuel_analysis": {
+            "fuel_remaining": round(fuel_remaining, 1),
+            "fuel_per_lap": round(fuel_per_lap, 2),
+            "laps_of_fuel_remaining": round(laps_of_fuel, 1),
+            "fuel_critical_lap": fuel_critical_lap
+        },
+        "strategy_options": strategies,
+        "undercut_window": undercut_window,
+        "overcut_window": overcut_window,
+        "caution_strategy": caution_pit_value,
+        "weather_impact": {
+            "track_temp": track_temp,
+            "temp_multiplier": round(temp_multiplier, 2),
+            "impact": "Higher tire wear" if temp_multiplier > 1.1 else "Normal"
+        },
+        "lap_time_trend": lap_times[-5:] if len(lap_times) >= 5 else lap_times
+    }
+
+# ============================================
+# RACE STORY TIMELINE - Automated Race Narrative
+# ============================================
+@app.get("/api/race_story/{lap}")
+def get_race_story(lap: int):
+    """
+    Generate an automated race story timeline - "What happened in this lap?"
+
+    Analyzes telemetry to detect and timestamp key events:
+    - Oversteer/understeer moments
+    - Excessive braking
+    - Speed losses
+    - Perfect sections
+    - Gear changes
+    - Corner entry/exit issues
+
+    Toyota engineers use this post-race to understand: "What went wrong/right?"
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        raise HTTPException(status_code=404, detail="Lap not found")
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+    df_lap = df_lap.reset_index(drop=True)
+
+    # Storage for timeline events
+    timeline_events = []
+
+    # Get lap reference time
+    lap_start_time = df_lap['timestamp'].iloc[0]
+
+    def add_event(idx, event_type, severity, title, description, metrics):
+        """Helper to add timeline event"""
+        point = df_lap.iloc[idx]
+        elapsed = (point['timestamp'] - lap_start_time).total_seconds()
+
+        timeline_events.append({
+            "time": round(elapsed, 2),
+            "distance": round(point['distance'], 1),
+            "lap_progress": round((point['distance'] / df_lap['distance'].max()) * 100, 1),
+            "event_type": event_type,
+            "severity": severity,
+            "title": title,
+            "description": description,
+            "metrics": metrics,
+            "x": float(point['WorldPositionX']) if 'WorldPositionX' in point else 0,
+            "y": float(point['WorldPositionY']) if 'WorldPositionY' in point else 0
+        })
+
+    # 1. DETECT OVERSTEER (sudden steering corrections)
+    if 'Steering_Angle' in df_lap.columns:
+        steering_changes = df_lap['Steering_Angle'].diff().abs()
+        for idx in range(1, len(df_lap)):
+            if steering_changes.iloc[idx] > 10:  # Sudden steering change
+                speed = df_lap.iloc[idx]['speed']
+                if speed > 100:  # Only at high speed
+                    add_event(
+                        idx,
+                        "oversteer",
+                        "warning",
+                        "Oversteer Detected",
+                        f"Sudden steering correction of {steering_changes.iloc[idx]:.1f}° at {speed:.0f} km/h",
+                        {
+                            "steering_change": round(steering_changes.iloc[idx], 1),
+                            "speed": round(speed, 1)
+                        }
+                    )
+
+    # 2. DETECT EXCESSIVE BRAKING
+    if 'pbrake_f' in df_lap.columns:
+        brake_data = df_lap['pbrake_f']
+        for idx in range(len(df_lap)):
+            if brake_data.iloc[idx] > 85:  # Heavy braking
+                speed = df_lap.iloc[idx]['speed']
+                add_event(
+                    idx,
+                    "braking",
+                    "info",
+                    "Heavy Braking",
+                    f"Brake pressure {brake_data.iloc[idx]:.0f}% at {speed:.0f} km/h",
+                    {
+                        "brake_pressure": round(brake_data.iloc[idx], 1),
+                        "speed": round(speed, 1)
+                    }
+                )
+
+    # 3. DETECT SPEED LOSS ZONES
+    if 'speed' in df_lap.columns:
+        # Calculate rolling average speed
+        df_lap['speed_ma'] = df_lap['speed'].rolling(window=5, center=True).mean()
+        speed_drops = df_lap['speed'].diff()
+
+        for idx in range(5, len(df_lap) - 5):
+            if speed_drops.iloc[idx] < -15:  # Sudden speed drop
+                throttle = df_lap.iloc[idx]['ath'] if 'ath' in df_lap.columns else 0
+                if throttle < 50:  # Not under acceleration
+                    add_event(
+                        idx,
+                        "speed_loss",
+                        "warning",
+                        "Speed Loss",
+                        f"Lost {abs(speed_drops.iloc[idx]):.0f} km/h - possible missed apex",
+                        {
+                            "speed_loss": round(abs(speed_drops.iloc[idx]), 1),
+                            "throttle": round(throttle, 1)
+                        }
+                    )
+
+    # 4. DETECT PERFECT SECTIONS (high speed + high throttle + smooth steering)
+    if 'ath' in df_lap.columns and 'Steering_Angle' in df_lap.columns:
+        for idx in range(10, len(df_lap) - 10, 20):  # Sample every 20 points
+            section = df_lap.iloc[idx-10:idx+10]
+            avg_speed = section['speed'].mean()
+            avg_throttle = section['ath'].mean()
+            steering_smoothness = section['Steering_Angle'].diff().abs().mean()
+
+            if avg_speed > 180 and avg_throttle > 85 and steering_smoothness < 2:
+                add_event(
+                    idx,
+                    "perfect",
+                    "success",
+                    "Perfect Section",
+                    f"Excellent speed ({avg_speed:.0f} km/h) and throttle control ({avg_throttle:.0f}%)",
+                    {
+                        "avg_speed": round(avg_speed, 1),
+                        "avg_throttle": round(avg_throttle, 1),
+                        "smoothness": round(steering_smoothness, 2)
+                    }
+                )
+
+    # 5. DETECT GEAR CHANGES (if available)
+    if 'gear' in df_lap.columns:
+        gear_changes = df_lap['gear'].diff()
+        for idx in range(1, len(df_lap)):
+            if abs(gear_changes.iloc[idx]) >= 1:
+                gear_from = df_lap.iloc[idx-1]['gear']
+                gear_to = df_lap.iloc[idx]['gear']
+                speed = df_lap.iloc[idx]['speed']
+
+                # Only log significant gear changes
+                if idx % 50 == 0:  # Sample to avoid too many events
+                    add_event(
+                        idx,
+                        "gear_change",
+                        "info",
+                        f"Gear: {int(gear_from)} → {int(gear_to)}",
+                        f"Shifted at {speed:.0f} km/h",
+                        {
+                            "gear_from": int(gear_from),
+                            "gear_to": int(gear_to),
+                            "speed": round(speed, 1)
+                        }
+                    )
+
+    # 6. DETECT CLOSEST TO PERFECT LAP
+    # Find the best lap to compare
+    try:
+        best_lap_info = get_best_lap()
+        best_lap_num = best_lap_info['best_lap']
+
+        if best_lap_num != lap:
+            df_best = df[df['lap'] == best_lap_num].copy()
+            df_best['distance'] = df_best['distance'] - df_best['distance'].iloc[0]
+
+            # Find point where current lap was closest to best lap speed
+            common_dist = np.linspace(0, min(df_lap['distance'].max(), df_best['distance'].max()), 50)
+            current_speeds = np.interp(common_dist, df_lap['distance'], df_lap['speed'])
+            best_speeds = np.interp(common_dist, df_best['distance'], df_best['speed'])
+            speed_deltas = current_speeds - best_speeds
+
+            # Find minimum delta (closest to best)
+            min_delta_idx = np.argmin(np.abs(speed_deltas))
+            min_delta = speed_deltas[min_delta_idx]
+            min_delta_dist = common_dist[min_delta_idx]
+
+            # Find index in original lap
+            closest_idx = (df_lap['distance'] - min_delta_dist).abs().argmin()
+
+            add_event(
+                closest_idx,
+                "milestone",
+                "success",
+                "Closest to Perfect Lap",
+                f"Only {abs(min_delta):.1f} km/h from best lap here",
+                {
+                    "delta": round(min_delta, 1),
+                    "best_lap": best_lap_num
+                }
+            )
+    except:
+        pass
+
+    # Sort events by time
+    timeline_events.sort(key=lambda x: x['time'])
+
+    # Limit to top 20 events to avoid clutter
+    if len(timeline_events) > 20:
+        # Prioritize: warnings > success > info
+        priority_order = {"warning": 0, "success": 1, "info": 2}
+        timeline_events.sort(key=lambda x: (priority_order.get(x['severity'], 3), x['time']))
+        timeline_events = timeline_events[:20]
+        timeline_events.sort(key=lambda x: x['time'])
+
+    # Generate summary
+    event_counts = {
+        "oversteer": len([e for e in timeline_events if e['event_type'] == 'oversteer']),
+        "speed_loss": len([e for e in timeline_events if e['event_type'] == 'speed_loss']),
+        "perfect": len([e for e in timeline_events if e['event_type'] == 'perfect']),
+        "braking": len([e for e in timeline_events if e['event_type'] == 'braking'])
+    }
+
+    # Lap rating
+    if event_counts['oversteer'] > 3 or event_counts['speed_loss'] > 5:
+        lap_rating = "Challenging"
+        rating_color = "#ef4444"
+    elif event_counts['perfect'] > 3 and event_counts['oversteer'] < 2:
+        lap_rating = "Excellent"
+        rating_color = "#22c55e"
+    else:
+        lap_rating = "Good"
+        rating_color = "#fbbf24"
+
+    return {
+        "lap": lap,
+        "event_count": len(timeline_events),
+        "lap_rating": lap_rating,
+        "rating_color": rating_color,
+        "event_summary": event_counts,
+        "timeline": timeline_events,
+        "lap_stats": {
+            "duration": (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds(),
+            "max_speed": round(df_lap['speed'].max(), 1),
+            "avg_speed": round(df_lap['speed'].mean(), 1),
+            "distance": round(df_lap['distance'].max(), 1)
+        }
+    }
+
+# ============================================
 # ML MODEL STATUS
 # ============================================
 @app.get("/api/ml_status")
