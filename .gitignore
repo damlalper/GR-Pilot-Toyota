@@ -59,3 +59,37 @@ data/
 *.onnx
 backend/ml/trained_models/*.pkl
 backend/ml/trained_models/*.h5
+
+# Compressed files (archives)
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+*.mp3
+*.wav
+*.psd
+*.ai
+
+# cota and other large folders
+cota/
+datasets/
+archives/
+
+# Large binary files (over 10MB typically)
+*.bin
+*.dat
+*.db
+*.sqlite
+*.sqlite3
