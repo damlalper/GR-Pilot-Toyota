@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { useStore } from '../store/useStore';
 import { TrendingUp, Gauge, Footprints, RotateCw } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 function ChartCard({
   title,
@@ -85,7 +86,11 @@ export function TelemetryCharts() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="glass rounded-xl p-4 space-y-4">
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="text-lg font-semibold text-white">Telemetry</h3>
+        <ComponentExplanation componentName="telemetry_charts" />
+      </div>
       {/* Speed Chart */}
       <ChartCard title="Speed (km/h)" icon={TrendingUp}>
         <ResponsiveContainer width="100%" height="100%">

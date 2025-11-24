@@ -1,0 +1,21 @@
+[33me31ee2d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{0}: reset: moving to HEAD~5
+[33m59deb82[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{1}: pull --rebase origin main (finish): returning to refs/heads/main
+[33m59deb82[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{2}: pull --rebase origin main (start): checkout 59deb823f3375139731e07fbc199f7f959497271
+[33mc34c4d1[m HEAD@{3}: commit: remove large telemetry file and Preparations have been made to add more detailed advanced features and further improve data usage. Features added to enhance technical depth and be used primarily by Toyota engineers include: professional motorsport analytics platform, exclusive sector analysis and multi-dataset fusion, Toyota GR UI with engineer/pilot modes, physics-based models (tire, grip, fuel), MoTeC export + pit strategy engine, driver DNA + turn-by-turn coaching.
+[33m2b436a2[m HEAD@{4}: reset: moving to HEAD~1
+[33m59deb82[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{5}: rebase (finish): returning to refs/heads/main
+[33m59deb82[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{6}: pull --rebase origin main (start): checkout 59deb823f3375139731e07fbc199f7f959497271
+[33m6215e24[m HEAD@{7}: commit: remove large telemetry file and Preparations have been made to add more detailed advanced features and further improve data usage. Features added to enhance technical depth and be used primarily by Toyota engineers include: professional motorsport analytics platform, exclusive sector analysis and multi-dataset fusion, Toyota GR UI with engineer/pilot modes, physics-based models (tire, grip, fuel), MoTeC export + pit strategy engine, driver DNA + turn-by-turn coaching.
+[33m103ee7b[m HEAD@{8}: reset: moving to HEAD~1
+[33m6d15ac6[m HEAD@{9}: commit: remove large telemetry file
+[33m103ee7b[m HEAD@{10}: reset: moving to HEAD~3
+[33m4464e75[m HEAD@{11}: commit: Preparations have been made to add more detailed advanced features and further improve data usage. Features added to enhance technical depth and be used primarily by Toyota engineers include: professional motorsport analytics platform, exclusive sector analysis and multi-dataset fusion, Toyota GR UI with engineer/pilot modes, physics-based models (tire, grip, fuel), MoTeC export + pit strategy engine, driver DNA + turn-by-turn coaching.
+[33m59deb82[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{12}: commit (amend): feat: Add initial project structure including backend and frontend applications
+[33m01c8793[m HEAD@{13}: commit: feat: Add initial project structure including backend and frontend applications
+[33m2b436a2[m HEAD@{14}: commit (merge): Resolve merge conflict: remove .env file
+[33m103ee7b[m HEAD@{15}: reset: moving to HEAD
+[33m103ee7b[m HEAD@{16}: commit: updated with a detailed readme.md
+[33m22b24f3[m HEAD@{17}: commit (amend): Add all project files
+[33m37a9df8[m HEAD@{18}: commit: Add all project files
+[33m7d022c3[m HEAD@{19}: commit: Update .gitignore and add .env
+[33me31ee2d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{20}: clone: from https://github.com/damlalper/GR-Pilot-Toyota.git

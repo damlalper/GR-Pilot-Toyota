@@ -2,25 +2,21 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchDriverDNA } from '../api';
 import { Fingerprint, Loader2 } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface DNAData {
   lap: number;
-  driver_style: string;
-  metrics: {
-    aggression_index: number;
-    smoothness_score: number;
-    consistency_rating: number;
-    brake_bias: string;
-    throttle_style: string;
-    cornering_preference: string;
-  };
-  fingerprint: {
-    avg_throttle_response: number;
-    avg_brake_intensity: number;
-    speed_variance: number;
-    rpm_utilization: number;
+  driver_type: string;
+  driver_description: string;
+  dna_scores: {
+    aggression: number;
+    smoothness: number;
+    consistency: number;
+    risk_tolerance?: number;
+    overall?: number;
   };
   recommendations: string[];
+  metrics: any;
 }
 
 export function DriverDNA() {
@@ -61,50 +57,55 @@ export function DriverDNA() {
           <Fingerprint className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h3 className="font-medium text-white">Driver DNA</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium text-white">Driver DNA</h3>
+            <ComponentExplanation componentName="driver_dna" />
+          </div>
           <p className="text-xs text-gray-400">Driving style fingerprint</p>
         </div>
       </div>
 
       {/* Driver Style Badge */}
       <div className="text-center mb-4">
-        <span className={`text-2xl font-bold uppercase ${styleColors[data.driver_style] || 'text-white'}`}>
-          {data.driver_style}
+        <span className={`text-2xl font-bold uppercase ${styleColors[data.driver_type.toLowerCase()] || 'text-white'}`}>
+          {data.driver_type}
         </span>
-        <p className="text-xs text-gray-500 mt-1">Driver Profile</p>
+        <p className="text-xs text-gray-500 mt-1">{data.driver_description}</p>
       </div>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="p-2 rounded-lg bg-white/5 text-center">
-          <div className="text-lg font-bold text-red-400">{data.metrics.aggression_index}%</div>
+          <div className="text-lg font-bold text-red-400">{data.dna_scores.aggression.toFixed(1)}%</div>
           <div className="text-xs text-gray-500">Aggression</div>
         </div>
         <div className="p-2 rounded-lg bg-white/5 text-center">
-          <div className="text-lg font-bold text-blue-400">{data.metrics.smoothness_score}%</div>
+          <div className="text-lg font-bold text-blue-400">{data.dna_scores.smoothness.toFixed(1)}%</div>
           <div className="text-xs text-gray-500">Smoothness</div>
         </div>
         <div className="p-2 rounded-lg bg-white/5 text-center">
-          <div className="text-lg font-bold text-green-400">{data.metrics.consistency_rating}%</div>
+          <div className="text-lg font-bold text-green-400">{data.dna_scores.consistency.toFixed(1)}%</div>
           <div className="text-xs text-gray-500">Consistency</div>
         </div>
       </div>
 
-      {/* Fingerprint Details */}
-      <div className="space-y-2 mb-4">
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Brake Bias</span>
-          <span className="text-white">{data.metrics.brake_bias}</span>
+      {/* Additional DNA Scores */}
+      {(data.dna_scores.risk_tolerance !== undefined || data.dna_scores.overall !== undefined) && (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {data.dna_scores.risk_tolerance !== undefined && (
+            <div className="p-2 rounded-lg bg-white/5 text-center">
+              <div className="text-lg font-bold text-yellow-400">{data.dna_scores.risk_tolerance.toFixed(1)}%</div>
+              <div className="text-xs text-gray-500">Risk Tolerance</div>
+            </div>
+          )}
+          {data.dna_scores.overall !== undefined && (
+            <div className="p-2 rounded-lg bg-white/5 text-center">
+              <div className="text-lg font-bold text-purple-400">{data.dna_scores.overall.toFixed(1)}%</div>
+              <div className="text-xs text-gray-500">Overall</div>
+            </div>
+          )}
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Throttle Style</span>
-          <span className="text-white">{data.metrics.throttle_style}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Cornering</span>
-          <span className="text-white">{data.metrics.cornering_preference}</span>
-        </div>
-      </div>
+      )}
 
       {/* Recommendations */}
       {data.recommendations.length > 0 && (

@@ -452,3 +452,7 @@ Bu, jüriye **"Vay canına, araba benimle konuşuyor!"** dedirtir.
 Bu modüller eklendiğinde proje:  
 **Analiz aracı → Gerçek yarış mühendisliği ürünü** seviyesine çıkar  
 ve Toyota TRD jürisinde 1.lik şansı maksimuma ulaşır.
+
+1. WebSocket real-time updates
+  2. Multi-driver 3D comparison
+  3. Turn-by-turn lap delta

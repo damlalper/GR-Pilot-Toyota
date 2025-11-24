@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchTireStress } from '../api';
 import { CircleDot, Loader2 } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface TireStressData {
   lap: number;
@@ -45,7 +46,7 @@ export function TireStress() {
     );
   }
 
-  if (!data) return null;
+  if (!data || !data.tires) return null;
 
   const getStressColor = (stress: number) => {
     if (stress >= 80) return 'text-red-400';
@@ -79,7 +80,10 @@ export function TireStress() {
           <CircleDot className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h3 className="font-medium text-white">Tire Stress</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium text-white">Tire Stress</h3>
+            <ComponentExplanation componentName="tire_stress" />
+          </div>
           <p className="text-xs text-gray-400">Wear estimation & analysis</p>
         </div>
       </div>

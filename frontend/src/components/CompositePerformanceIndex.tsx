@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { api } from '../api';
 import { Gauge, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface CPIData {
   lap: number;
@@ -69,7 +70,10 @@ export function CompositePerformanceIndex() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Gauge className="w-6 h-6 text-toyota-red" />
-          <h3 className="text-lg font-semibold text-white">Composite Performance Index</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-white">Composite Performance Index</h3>
+            <ComponentExplanation componentName="composite_performance" />
+          </div>
         </div>
         <div className="px-3 py-1 rounded-full bg-white/5">
           <span className="text-xs text-gray-400">Lap {cpiData.lap}</span>

@@ -63,7 +63,7 @@ export function ChatBot() {
 
       {/* Chat Panel */}
       <div
-        className={`fixed bottom-24 right-6 z-40 w-96 max-h-[600px] glass rounded-2xl shadow-2xl transition-all duration-300 overflow-hidden ${
+        className={`fixed bottom-24 right-6 z-40 w-[32rem] max-h-[700px] glass rounded-2xl shadow-2xl transition-all duration-300 overflow-hidden ${
           isChatOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
         }`}
       >
@@ -81,7 +81,7 @@ export function ChatBot() {
         </div>
 
         {/* Messages */}
-        <div className="h-80 overflow-y-auto p-4 space-y-4">
+        <div className="h-[28rem] overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">
               <Bot className="w-12 h-12 text-gray-500 mx-auto mb-3" />
@@ -119,13 +119,13 @@ export function ChatBot() {
                 )}
               </div>
               <div
-                className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white rounded-br-sm'
                     : 'bg-white/10 text-gray-200 rounded-bl-sm'
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                 {msg.plot_type && (
                   <p className="text-xs mt-2 text-gray-400">
                     📊 Suggested chart: {msg.plot_type}

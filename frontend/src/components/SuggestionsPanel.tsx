@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchSuggestions } from '../api';
 import { Lightbulb, AlertCircle, CheckCircle, ChevronRight } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface Suggestion {
   type: string;
@@ -104,7 +105,10 @@ export function SuggestionsPanel() {
             <Lightbulb className="w-5 h-5 text-yellow-400" />
           </div>
           <div>
-            <h3 className="font-bold text-white">AI Suggestions</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-white">AI Suggestions</h3>
+              <ComponentExplanation componentName="ai_suggestions" />
+            </div>
             <p className="text-xs text-gray-400">{data.suggestion_count} improvements found</p>
           </div>
         </div>

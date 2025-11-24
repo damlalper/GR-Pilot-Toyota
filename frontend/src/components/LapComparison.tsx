@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
-import { fetchLapComparison, fetchBestLap } from '../api';
+import { fetchLapComparison, fetchBestLap, fetchLapData } from '../api';
 import {
   LineChart,
   Line,
@@ -14,6 +14,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { GitCompare, Trophy, Clock, TrendingDown, TrendingUp } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface ComparisonData {
   lap1: { number: number; time: number; data: Record<string, number[]> };
@@ -23,7 +24,7 @@ interface ComparisonData {
 }
 
 export function LapComparison() {
-  const { currentLap, laps } = useStore();
+  const { currentLap, laps, setComparisonLapData } = useStore();
   const [comparison, setComparison] = useState<ComparisonData | null>(null);
   const [refLap, setRefLap] = useState<number | null>(null);
   const [bestLap, setBestLap] = useState<number | null>(null);
@@ -47,11 +48,18 @@ export function LapComparison() {
   // Load comparison when laps change
   useEffect(() => {
     const loadComparison = async () => {
-      if (!currentLap || !refLap || currentLap === refLap) return;
+      if (!currentLap || !refLap || currentLap === refLap) {
+        setComparisonLapData(null);
+        return;
+      }
       setIsLoading(true);
       try {
         const data = await fetchLapComparison(currentLap, refLap);
         setComparison(data);
+
+        // Load comparison lap data for 3D visualization
+        const comparisonData = await fetchLapData(refLap);
+        setComparisonLapData(comparisonData);
       } catch (error) {
         console.error('Failed to load comparison:', error);
       } finally {
@@ -59,7 +67,7 @@ export function LapComparison() {
       }
     };
     loadComparison();
-  }, [currentLap, refLap]);
+  }, [currentLap, refLap, setComparisonLapData]);
 
   // Prepare chart data
   const chartData = comparison
@@ -82,10 +90,11 @@ export function LapComparison() {
     <div className="glass rounded-xl p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="font-bold text-white flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <GitCompare className="w-5 h-5 text-toyota-red" />
-          Lap Comparison
-        </h3>
+          <h3 className="font-bold text-white">Lap Comparison</h3>
+          <ComponentExplanation componentName="lap_comparison" />
+        </div>
 
         {/* Reference Lap Selector */}
         <div className="flex items-center gap-2">

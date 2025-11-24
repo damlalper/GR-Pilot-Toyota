@@ -2,21 +2,26 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchAnomalies } from '../api';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface Anomaly {
+  index: number;
   distance: number;
-  ref_speed: number;
-  user_speed: number;
-  speed_delta: number;
-  x: number;
-  y: number;
-  reason?: string;
+  anomaly_score: number;
+  speed: number;
+  throttle: number;
+  brake: number;
+  steering: number;
+  type: string;
+  explanation: string;
 }
 
 interface AnomalyData {
   user_lap: number;
-  ref_lap: number;
+  detection_method: string;
   anomaly_count: number;
+  anomaly_percentage: number;
+  total_points: number;
   anomalies: Anomaly[];
 }
 
@@ -56,10 +61,19 @@ export function AnomalyOverlay() {
     );
   }
 
-  const getPriorityColor = (delta: number) => {
-    if (delta > 30) return 'bg-red-500';
-    if (delta > 20) return 'bg-orange-500';
+  const getPriorityColor = (type: string, score: number) => {
+    // Higher negative score = more anomalous
+    const absScore = Math.abs(score);
+    if (type === 'speed_anomaly' || type === 'throttle_brake_overlap' || absScore > 0.15) return 'bg-red-500';
+    if (type === 'steering_correction' || absScore > 0.10) return 'bg-orange-500';
     return 'bg-yellow-500';
+  };
+
+  const getSeverity = (type: string, score: number) => {
+    const absScore = Math.abs(score);
+    if (type === 'speed_anomaly' || type === 'throttle_brake_overlap' || absScore > 0.15) return 'critical';
+    if (type === 'steering_correction' || absScore > 0.10) return 'warning';
+    return 'minor';
   };
 
   return (
@@ -73,10 +87,13 @@ export function AnomalyOverlay() {
           <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center">
             <AlertTriangle className="w-5 h-5 text-red-400" />
           </div>
-          <div className="text-left">
-            <h3 className="font-bold text-white">Anomaly Detection</h3>
+          <div className="text-left flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-white">Anomaly Detection</h3>
+              <ComponentExplanation componentName="anomaly_detection" />
+            </div>
             <p className="text-xs text-gray-400">
-              {anomalyData.anomaly_count} anomalies vs Lap {anomalyData.ref_lap}
+              {anomalyData.anomaly_count} anomalies ({anomalyData.anomaly_percentage.toFixed(1)}% of lap)
             </p>
           </div>
         </div>
@@ -100,19 +117,19 @@ export function AnomalyOverlay() {
             <div className="flex-1 text-center p-2 rounded-lg bg-red-500/10">
               <p className="text-xs text-gray-400">Critical</p>
               <p className="text-lg font-bold text-red-400">
-                {anomalyData.anomalies.filter((a) => a.speed_delta > 30).length}
+                {anomalyData.anomalies.filter((a) => getSeverity(a.type, a.anomaly_score) === 'critical').length}
               </p>
             </div>
             <div className="flex-1 text-center p-2 rounded-lg bg-orange-500/10">
               <p className="text-xs text-gray-400">Warning</p>
               <p className="text-lg font-bold text-orange-400">
-                {anomalyData.anomalies.filter((a) => a.speed_delta > 20 && a.speed_delta <= 30).length}
+                {anomalyData.anomalies.filter((a) => getSeverity(a.type, a.anomaly_score) === 'warning').length}
               </p>
             </div>
             <div className="flex-1 text-center p-2 rounded-lg bg-yellow-500/10">
               <p className="text-xs text-gray-400">Minor</p>
               <p className="text-lg font-bold text-yellow-400">
-                {anomalyData.anomalies.filter((a) => a.speed_delta <= 20).length}
+                {anomalyData.anomalies.filter((a) => getSeverity(a.type, a.anomaly_score) === 'minor').length}
               </p>
             </div>
           </div>
@@ -126,22 +143,21 @@ export function AnomalyOverlay() {
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${getPriorityColor(anomaly.speed_delta)}`} />
+                    <div className={`w-2 h-2 rounded-full ${getPriorityColor(anomaly.type, anomaly.anomaly_score)}`} />
                     <span className="text-sm font-medium text-white">
                       {Math.round(anomaly.distance)}m
                     </span>
                   </div>
-                  <span className="text-sm font-bold text-red-400">
-                    -{Math.round(anomaly.speed_delta)} km/h
+                  <span className="px-2 py-1 rounded-full bg-white/10 text-xs font-medium text-white">
+                    {anomaly.type.replace(/_/g, ' ')}
                   </span>
                 </div>
-                <div className="flex justify-between text-xs text-gray-400">
-                  <span>Your: {Math.round(anomaly.user_speed)} km/h</span>
-                  <span>Ref: {Math.round(anomaly.ref_speed)} km/h</span>
+                <div className="flex justify-between text-xs mb-2">
+                  <span className="text-gray-400">Speed: <span className="text-white">{Math.round(anomaly.speed)} km/h</span></span>
+                  <span className="text-gray-400">Throttle: <span className="text-white">{Math.round(anomaly.throttle)}%</span></span>
+                  <span className="text-gray-400">Brake: <span className="text-white">{Math.round(anomaly.brake)}</span></span>
                 </div>
-                {anomaly.reason && (
-                  <p className="text-xs text-gray-300 mt-2 italic">{anomaly.reason}</p>
-                )}
+                <p className="text-xs text-gray-300 italic">{anomaly.explanation}</p>
               </div>
             ))}
           </div>

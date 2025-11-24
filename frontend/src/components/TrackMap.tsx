@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { MapPin } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 export function TrackMap() {
   const { lapData, currentIndex } = useStore();
@@ -68,10 +69,13 @@ export function TrackMap() {
 
   return (
     <div className="glass rounded-xl p-4">
-      <h4 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
-        <MapPin className="w-4 h-4 text-toyota-red" />
-        Track Map
-      </h4>
+      <div className="flex items-center gap-2 mb-3">
+        <h4 className="text-sm font-medium text-gray-300 flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-toyota-red" />
+          Track Map
+        </h4>
+        <ComponentExplanation componentName="track_map" />
+      </div>
 
       <svg
         viewBox="0 0 300 200"

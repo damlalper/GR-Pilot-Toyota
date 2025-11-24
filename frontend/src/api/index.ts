@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { LapData, TrackData } from '../types';
 
-const API_URL = 'http://localhost:8000';
+// Use environment variable for API URL, fallback to localhost for development
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -86,3 +87,41 @@ export const fetchTireStress = async (lap: number) => {
   const response = await api.get(`/api/tire_stress/${lap}`);
   return response.data;
 };
+
+// Missing exports
+export const fetchBestLaps = async () => {
+  const response = await api.get('/api/best_laps');
+  return response.data;
+};
+
+export const fetchMLValidation = async () => {
+  const response = await api.get('/api/ml/validation');
+  return response.data;
+};
+
+export const fetchPerfectLap = async (laps: number[]) => {
+  const response = await api.post('/api/perfect_lap', { laps });
+  return response.data;
+};
+
+export const fetchCPI = async (lap: number) => {
+  const response = await api.get(`/cpi/${lap}`);
+  return response.data;
+};
+
+export const fetchPitStrategy = async (lap: number, raceLaps = 30) => {
+  const response = await api.get(`/pit_strategy/${lap}`, { params: { race_laps: raceLaps } });
+  return response.data;
+};
+
+export const fetchRaceStory = async (lap: number) => {
+  const response = await api.get(`/race_story/${lap}`);
+  return response.data;
+};
+
+export const fetchComponentExplanation = async (component: string, lap: number) => {
+  const response = await api.get(`/api/component_explanation/${component}/${lap}`);
+  return response.data;
+};
+
+export { api };

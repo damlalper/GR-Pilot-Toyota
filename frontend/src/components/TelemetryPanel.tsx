@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
-import { Gauge, Activity, Zap, Wind } from 'lucide-react';
+import { Gauge, Activity, Zap, Wind, Navigation } from 'lucide-react';
 
 function SpeedGauge({ value, max }: { value: number; max: number }) {
   const percentage = Math.min((value / max) * 100, 100);
@@ -158,6 +158,32 @@ export function TelemetryPanel() {
           label="Brake"
           color="bg-toyota-red"
         />
+      </div>
+
+      {/* GPS Position */}
+      <div className="glass-inner rounded-lg p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <Navigation className="w-4 h-4 text-green-400" />
+          <p className="text-xs font-semibold text-green-400">GPS Position</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-gray-500">Latitude</p>
+            <p className="text-white font-mono">{(currentData.lat || 0).toFixed(6)}°</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Longitude</p>
+            <p className="text-white font-mono">{(currentData.lon || 0).toFixed(6)}°</p>
+          </div>
+          <div>
+            <p className="text-gray-500">World X</p>
+            <p className="text-white font-mono">{(currentData.WorldPositionX || 0).toFixed(2)}m</p>
+          </div>
+          <div>
+            <p className="text-gray-500">World Y</p>
+            <p className="text-white font-mono">{(currentData.WorldPositionY || 0).toFixed(2)}m</p>
+          </div>
+        </div>
       </div>
 
       {/* Steering */}

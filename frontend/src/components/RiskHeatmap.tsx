@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchRiskHeatmap } from '../api';
 import { AlertTriangle, Loader2, MapPin } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface RiskData {
   lap: number;
@@ -42,7 +43,7 @@ export function RiskHeatmap() {
     );
   }
 
-  if (!data) return null;
+  if (!data || !data.zones) return null;
 
   const getRiskColor = (score: number) => {
     if (score >= 70) return 'bg-red-500';
@@ -63,7 +64,10 @@ export function RiskHeatmap() {
           <AlertTriangle className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h3 className="font-medium text-white">Risk Heatmap</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium text-white">Risk Heatmap</h3>
+            <ComponentExplanation componentName="risk_heatmap" />
+          </div>
           <p className="text-xs text-gray-400">Spin/Lock-up risk analysis</p>
         </div>
       </div>
@@ -123,21 +127,23 @@ export function RiskHeatmap() {
                     {zone.risk_score}%
                   </span>
                 </div>
-                <p className="text-xs text-gray-400">{zone.risk_type}</p>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {zone.factors.map((f, i) => (
-                    <span key={i} className="text-xs px-1 py-0.5 rounded bg-white/10 text-gray-300">
-                      {f}
-                    </span>
-                  ))}
-                </div>
+                <p className="text-xs text-gray-400 capitalize">{zone.risk_type}</p>
+                {zone.factors && zone.factors.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {zone.factors.map((f, i) => (
+                      <span key={i} className="text-xs px-1 py-0.5 rounded bg-white/10 text-gray-300">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
       </div>
 
       {/* Recommendations */}
-      {data.recommendations.length > 0 && (
+      {data.recommendations && data.recommendations.length > 0 && (
         <div className="border-t border-white/10 pt-3">
           <p className="text-xs text-gray-400 mb-2">Safety Tips</p>
           <ul className="space-y-1">
@@ -148,6 +154,17 @@ export function RiskHeatmap() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Single Recommendation String */}
+      {data.recommendation && !data.recommendations && (
+        <div className="border-t border-white/10 pt-3">
+          <p className="text-xs text-gray-400 mb-2">Safety Tip</p>
+          <p className="text-xs text-gray-300 flex items-start gap-1">
+            <span className="text-orange-400">!</span>
+            {data.recommendation}
+          </p>
         </div>
       )}
     </div>

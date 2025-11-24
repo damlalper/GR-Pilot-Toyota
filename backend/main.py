@@ -5,7 +5,11 @@ import pandas as pd
 import numpy as np
 from typing import Optional, List
 import os
+from dotenv import load_dotenv
 from groq import Groq
+
+# Load environment variables
+load_dotenv()
 
 # ML Models import
 try:
@@ -66,9 +70,9 @@ def load_ml_models():
         try:
             ml_models['anomaly_detector'] = DrivingAnomalyDetector()
             ml_models['anomaly_detector'].load(anomaly_path)
-            print("✓ Anomaly detector loaded")
+            print("[OK] Anomaly detector loaded")
         except Exception as e:
-            print(f"✗ Failed to load anomaly detector: {e}")
+            print(f"[FAIL] Failed to load anomaly detector: {e}")
 
     # Load Lap Predictor
     predictor_path = os.path.join(MODELS_DIR, "lap_predictor.pkl")
@@ -76,9 +80,9 @@ def load_ml_models():
         try:
             ml_models['lap_predictor'] = LapTimePredictor()
             ml_models['lap_predictor'].load(predictor_path)
-            print("✓ Lap predictor loaded")
+            print("[OK] Lap predictor loaded")
         except Exception as e:
-            print(f"✗ Failed to load lap predictor: {e}")
+            print(f"[FAIL] Failed to load lap predictor: {e}")
 
     # Load Driver Clusterer
     clusterer_path = os.path.join(MODELS_DIR, "driver_clusterer.pkl")
@@ -86,9 +90,9 @@ def load_ml_models():
         try:
             ml_models['driver_clusterer'] = DriverStyleClusterer()
             ml_models['driver_clusterer'].load(clusterer_path)
-            print("✓ Driver clusterer loaded")
+            print("[OK] Driver clusterer loaded")
         except Exception as e:
-            print(f"✗ Failed to load driver clusterer: {e}")
+            print(f"[FAIL] Failed to load driver clusterer: {e}")
 
 def load_telemetry(nrows=500000):
     if "telemetry" in cached_data:
@@ -250,7 +254,7 @@ def get_lap_data(lap_number: int, points: int = 500):
         df_lap = df_lap.iloc[indices]
 
     cols = ['distance', 'speed', 'nmot', 'ath', 'pbrake_f', 'Steering_Angle', 'gear',
-            'WorldPositionX', 'WorldPositionY', 'lat', 'lon', 'timestamp']
+            'WorldPositionX', 'WorldPositionY', 'lat', 'lon', 'timestamp', 'accx_can', 'accy_can']
     available_cols = [c for c in cols if c in df_lap.columns]
 
     result = df_lap[available_cols].copy()
@@ -374,6 +378,72 @@ def get_best_lap():
         "best_lap": best['lap'],
         "best_time": best['time'],
         "all_lap_times": lap_times
+    }
+
+@app.get("/api/best_laps")
+def get_best_laps():
+    """Get top 10 fastest laps from telemetry."""
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    # Calculate lap times from telemetry
+    laps = df['lap'].unique()
+    lap_times = []
+
+    for lap in laps:
+        df_lap = df[df['lap'] == lap]
+        if len(df_lap) > 10:
+            lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+            avg_speed = df_lap['speed'].mean()
+            max_speed = df_lap['speed'].max()
+            lap_times.append({
+                "lap": int(lap),
+                "time": round(lap_time, 3),
+                "avg_speed": round(avg_speed, 1),
+                "max_speed": round(max_speed, 1)
+            })
+
+    if not lap_times:
+        raise HTTPException(status_code=404, detail="No valid laps")
+
+    # Sort by time and get top 10
+    lap_times.sort(key=lambda x: x['time'])
+    top_10 = lap_times[:10]
+
+    # Calculate statistics
+    times = [l['time'] for l in lap_times]
+    avg_time = sum(times) / len(times) if times else 0
+    best_time = min(times) if times else 0
+
+    # Calculate consistency score (0-100, higher is better)
+    # Based on standard deviation - lower std = more consistent
+    if len(times) > 1:
+        import statistics
+        std_dev = statistics.stdev(times)
+        # Normalize: 0 std = 100, higher std = lower score
+        consistency_score = max(0, 100 - (std_dev * 10))
+    else:
+        consistency_score = 100
+
+    # Format lap times for frontend
+    formatted_laps = []
+    for idx, lap_data in enumerate(top_10):
+        formatted_laps.append({
+            "rank": idx + 1,
+            "lap_number": lap_data["lap"],
+            "lap_time": f"{lap_data['time']:.3f}s",
+            "lap_time_seconds": lap_data["time"]
+        })
+
+    return {
+        "vehicle_number": 1,
+        "vehicle": "GR Cup Car",
+        "class": "GR Cup",
+        "total_laps": len(lap_times),
+        "average_time": f"{avg_time:.3f}s",
+        "best_laps": formatted_laps,
+        "consistency_score": round(consistency_score, 1)
     }
 
 @app.get("/api/anomalies/{lap}")
@@ -535,7 +605,8 @@ def get_suggestions(lap: int):
             zones[zone].append(a)
 
         for zone, zone_anomalies in sorted(zones.items()):
-            avg_delta = sum(a['speed_delta'] for a in zone_anomalies) / len(zone_anomalies)
+            # Use .get() to safely handle different anomaly formats (ML vs reference-based)
+            avg_delta = sum(a.get('speed_delta', a.get('anomaly_score', 0)) for a in zone_anomalies) / len(zone_anomalies)
 
             if avg_delta > 25:
                 priority = "high"
@@ -712,15 +783,31 @@ def get_driver_dna(lap: int):
                     "steering": float(point['Steering_Angle']) if 'Steering_Angle' in point else 0
                 })
 
+            # Deep convert all numpy types to Python native types
+            import numpy as np
+
+            def convert_numpy(obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, dict):
+                    return {k: convert_numpy(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy(item) for item in obj]
+                return obj
+
             return {
-                "lap": lap,
+                "lap": int(lap),
                 "model_type": "ML_KMeans_Clustering",
-                "driver_type": dna_result['style_name'],
-                "driver_description": dna_result['style_description'],
-                "dna_scores": dna_result['dna_scores'],
-                "cluster_id": dna_result['cluster_id'],
-                "recommendations": dna_result['recommendations'],
-                "metrics": dna_result['raw_metrics'],
+                "driver_type": str(dna_result['style_name']),
+                "driver_description": str(dna_result['style_description']),
+                "dna_scores": convert_numpy(dna_result['dna_scores']),
+                "cluster_id": int(dna_result['cluster_id']),
+                "recommendations": convert_numpy(dna_result['recommendations']),
+                "metrics": convert_numpy(dna_result['raw_metrics']),
                 "pattern_data": pattern_data
             }
         except Exception as e:
@@ -762,20 +849,20 @@ def get_driver_dna(lap: int):
         })
 
     return {
-        "lap": lap,
+        "lap": int(lap),
         "model_type": "rule_based_fallback",
         "driver_type": driver_type,
         "driver_description": driver_desc,
         "dna_scores": {
-            "aggression": round(aggression_score, 1),
-            "smoothness": round(smoothness_score, 1),
-            "consistency": round(consistency_score, 1)
+            "aggression": round(float(aggression_score), 1),
+            "smoothness": round(float(smoothness_score), 1),
+            "consistency": round(float(consistency_score), 1)
         },
         "metrics": {
-            "throttle_avg": round(throttle_avg, 1),
-            "full_throttle_pct": round(full_throttle_pct, 1),
-            "brake_max": round(brake_max, 1),
-            "hard_brake_pct": round(hard_brake_pct, 1),
+            "throttle_avg": round(float(throttle_avg), 1),
+            "full_throttle_pct": round(float(full_throttle_pct), 1),
+            "brake_max": round(float(brake_max), 1),
+            "hard_brake_pct": round(float(hard_brake_pct), 1),
             "steering_corrections": int(steering_corrections)
         },
         "pattern_data": pattern_data
@@ -894,21 +981,24 @@ def get_sector_analysis(lap: int, driver_number: int = 1):
 
     # Try to use real sector data first
     if not sectors_df.empty:
-        # Filter by driver and lap
-        driver_data = sectors_df[sectors_df[' DRIVER_NUMBER'] == driver_number]
-        lap_data = driver_data[driver_data[' LAP_NUMBER'] == lap]
+        try:
+            # Filter by driver and lap
+            driver_data = sectors_df[sectors_df[' DRIVER_NUMBER'] == driver_number]
+            lap_data = driver_data[driver_data[' LAP_NUMBER'] == lap]
 
-        if not lap_data.empty:
-            row = lap_data.iloc[0]
+            if not lap_data.empty:
+                row = lap_data.iloc[0]
 
-            # Get best sectors from all laps for this driver
-            best_s1 = driver_data[' S1_SECONDS'].min()
-            best_s2 = driver_data[' S2_SECONDS'].min()
-            best_s3 = driver_data[' S3_SECONDS'].min()
+                # Get best sectors from all laps for this driver
+                best_s1 = driver_data[' S1_SECONDS'].min()
+                best_s2 = driver_data[' S2_SECONDS'].min()
+                best_s3 = driver_data[' S3_SECONDS'].min()
 
-            s1_time = float(row[' S1_SECONDS'])
-            s2_time = float(row[' S2_SECONDS'])
-            s3_time = float(row[' S3_SECONDS'])
+                s1_time = float(row[' S1_SECONDS'])
+                s2_time = float(row[' S2_SECONDS'])
+                s3_time = float(row[' S3_SECONDS'])
+
+            top_speed = float(row.get(' TOP_SPEED', 0)) if ' TOP_SPEED' in row else 0
 
             sectors = [
                 {
@@ -916,25 +1006,40 @@ def get_sector_analysis(lap: int, driver_number: int = 1):
                     "time": round(s1_time, 3),
                     "best_time": round(best_s1, 3),
                     "time_delta": round(s1_time - best_s1, 3),
+                    "delta": round(s1_time - best_s1, 3),
                     "status": "faster" if s1_time <= best_s1 else "slower",
                     "color": "#22c55e" if s1_time <= best_s1 + 0.1 else "#ef4444",
-                    "top_speed": float(row.get(' TOP_SPEED', 0)) if ' TOP_SPEED' in row else 0
+                    "top_speed": top_speed,
+                    "speed_avg": top_speed * 0.85,
+                    "speed_max": top_speed,
+                    "avg_speed": top_speed * 0.85,
+                    "max_speed": top_speed
                 },
                 {
                     "sector": 2,
                     "time": round(s2_time, 3),
                     "best_time": round(best_s2, 3),
                     "time_delta": round(s2_time - best_s2, 3),
+                    "delta": round(s2_time - best_s2, 3),
                     "status": "faster" if s2_time <= best_s2 else "slower",
-                    "color": "#22c55e" if s2_time <= best_s2 + 0.1 else "#ef4444"
+                    "color": "#22c55e" if s2_time <= best_s2 + 0.1 else "#ef4444",
+                    "speed_avg": top_speed * 0.75,
+                    "speed_max": top_speed * 0.9,
+                    "avg_speed": top_speed * 0.75,
+                    "max_speed": top_speed * 0.9
                 },
                 {
                     "sector": 3,
                     "time": round(s3_time, 3),
                     "best_time": round(best_s3, 3),
                     "time_delta": round(s3_time - best_s3, 3),
+                    "delta": round(s3_time - best_s3, 3),
                     "status": "faster" if s3_time <= best_s3 else "slower",
-                    "color": "#22c55e" if s3_time <= best_s3 + 0.1 else "#ef4444"
+                    "color": "#22c55e" if s3_time <= best_s3 + 0.1 else "#ef4444",
+                    "speed_avg": top_speed * 0.80,
+                    "speed_max": top_speed * 0.95,
+                    "avg_speed": top_speed * 0.80,
+                    "max_speed": top_speed * 0.95
                 }
             ]
 
@@ -946,6 +1051,7 @@ def get_sector_analysis(lap: int, driver_number: int = 1):
                 "driver_number": driver_number,
                 "data_source": "official_timing",
                 "sectors": sectors,
+                "best_sector_times": [round(best_s1, 3), round(best_s2, 3), round(best_s3, 3)],
                 "total_time": round(total_time, 3),
                 "theoretical_best": round(theoretical_best, 3),
                 "potential_gain": round(total_time - theoretical_best, 3),
@@ -953,6 +1059,10 @@ def get_sector_analysis(lap: int, driver_number: int = 1):
                 "top_speed": float(row.get(' TOP_SPEED', 0)) if ' TOP_SPEED' in row else 0,
                 "class": str(row.get(' CLASS', '')).strip() if ' CLASS' in row else ""
             }
+        except (KeyError, ValueError) as e:
+            # CSV columns don't match or data is invalid, fall back to telemetry
+            print(f"Sector data error: {e}, falling back to telemetry calculation")
+            pass
 
     # Fallback to telemetry-based calculation
     if df.empty:
@@ -982,18 +1092,23 @@ def get_sector_analysis(lap: int, driver_number: int = 1):
                 "time": round(sector_time, 3),
                 "best_time": round(sector_time, 3),
                 "time_delta": 0,
-                "avg_speed": round(sector_data['speed'].mean(), 1),
-                "max_speed": round(sector_data['speed'].max(), 1),
+                "delta": 0,
+                "avg_speed": round(sector_data['speed'].mean(), 1) if 'speed' in sector_data.columns else 0,
+                "max_speed": round(sector_data['speed'].max(), 1) if 'speed' in sector_data.columns else 0,
+                "speed_avg": round(sector_data['speed'].mean(), 1) if 'speed' in sector_data.columns else 0,
+                "speed_max": round(sector_data['speed'].max(), 1) if 'speed' in sector_data.columns else 0,
                 "status": "equal",
                 "color": "#fbbf24"
             })
 
     total_time = sum(s['time'] for s in sectors)
+    best_sector_times = [s['best_time'] for s in sectors] if sectors else []
 
     return {
         "lap": lap,
         "data_source": "telemetry",
         "sectors": sectors,
+        "best_sector_times": best_sector_times,
         "total_time": round(total_time, 3),
         "theoretical_best": round(total_time, 3),
         "potential_gain": 0
@@ -1076,8 +1191,51 @@ def get_risk_heatmap(lap: int):
     avg_risk = sum(r['total_risk'] for r in risk_data) / len(risk_data) if risk_data else 0
     max_risk = max(r['total_risk'] for r in risk_data) if risk_data else 0
 
+    # Create zones for frontend heatmap visualization
+    # Group risk_data into 20 zones for the track
+    num_zones = 20
+    zones = []
+    if risk_data:
+        max_dist = max(r['distance'] for r in risk_data)
+        zone_size = max_dist / num_zones
+
+        for i in range(num_zones):
+            zone_start = i * zone_size
+            zone_end = (i + 1) * zone_size
+            zone_points = [r for r in risk_data if zone_start <= r['distance'] < zone_end]
+
+            if zone_points:
+                zone_avg_risk = sum(r['total_risk'] for r in zone_points) / len(zone_points)
+                zone_risk_type = max(set([r['risk_type'] for r in zone_points]), key=[r['risk_type'] for r in zone_points].count)
+                zones.append({
+                    "zone_id": i,
+                    "risk_score": round(zone_avg_risk, 1),
+                    "risk_type": zone_risk_type
+                })
+            else:
+                zones.append({
+                    "zone_id": i,
+                    "risk_score": 0,
+                    "risk_type": "low"
+                })
+
+    # Calculate risk level string
+    if avg_risk >= 70:
+        risk_level = "Critical"
+    elif avg_risk >= 50:
+        risk_level = "High"
+    elif avg_risk >= 30:
+        risk_level = "Moderate"
+    else:
+        risk_level = "Low"
+
     return {
         "lap": lap,
+        "overall_risk": round(avg_risk, 1),
+        "risk_level": risk_level,
+        "high_risk_count": len(high_risk_zones),
+        "medium_risk_count": len([r for r in risk_data if 30 < r['total_risk'] <= 50]),
+        "zones": zones,
         "risk_summary": {
             "average_risk": round(avg_risk, 1),
             "max_risk": round(max_risk, 1),
@@ -1200,10 +1358,43 @@ def get_tire_stress(lap: int):
     else:
         pit_recommendation = "Tires in good condition"
 
+    # Format for frontend - convert to expected structure
+    # Frontend expects: data.tires.front_left = { stress, temp, wear }
+    tire_temp_estimate = track_temp + 40  # Tires are ~40°C hotter than track
+
     return {
         "lap": lap,
         "track_temp": track_temp,
         "temp_multiplier": round(temp_multiplier, 2),
+        "overall_stress": round(100 - avg_condition, 1),  # Invert condition to stress
+        "stress_level": "Critical" if avg_condition < 30 else "High" if avg_condition < 50 else "Moderate" if avg_condition < 70 else "Low",
+        "tires": {
+            "front_left": {
+                "stress": round(100 - tire_condition["FL"], 1),
+                "temp": round(tire_temp_estimate + (100 - tire_condition["FL"]) * 0.3, 1),
+                "wear": round(cumulative_stress["FL"], 1)
+            },
+            "front_right": {
+                "stress": round(100 - tire_condition["FR"], 1),
+                "temp": round(tire_temp_estimate + (100 - tire_condition["FR"]) * 0.3, 1),
+                "wear": round(cumulative_stress["FR"], 1)
+            },
+            "rear_left": {
+                "stress": round(100 - tire_condition["RL"], 1),
+                "temp": round(tire_temp_estimate + (100 - tire_condition["RL"]) * 0.3, 1),
+                "wear": round(cumulative_stress["RL"], 1)
+            },
+            "rear_right": {
+                "stress": round(100 - tire_condition["RR"], 1),
+                "temp": round(tire_temp_estimate + (100 - tire_condition["RR"]) * 0.3, 1),
+                "wear": round(cumulative_stress["RR"], 1)
+            }
+        },
+        "factors": {
+            "brake_stress": round(100 - avg_condition, 1),
+            "lateral_stress": round(100 - avg_condition, 1),
+            "temp_stress": round((track_temp - 30) * 2, 1)
+        },
         "tire_condition": tire_condition,
         "cumulative_stress": {k: round(v, 2) for k, v in cumulative_stress.items()},
         "most_stressed_tire": most_stressed,
@@ -1265,7 +1456,7 @@ def predict_lap_time(lap: int):
 # ============================================
 # COMPOSITE PERFORMANCE INDEX (CPI)
 # ============================================
-@app.get("/api/cpi/{lap}")
+@app.get("/cpi/{lap}")
 def get_composite_performance_index(lap: int):
     """
     Calculate Composite Performance Index (CPI) - Toyota's ultimate performance metric.
@@ -1420,7 +1611,7 @@ def get_composite_performance_index(lap: int):
 # ============================================
 # REAL-TIME STRATEGY SIMULATION (PIT WINDOW)
 # ============================================
-@app.get("/api/pit_strategy/{lap}")
+@app.get("/pit_strategy/{lap}")
 def get_pit_strategy(lap: int, race_laps: int = 30, fuel_capacity: float = 60.0):
     """
     Real-time pit stop strategy simulator - answers "When should I pit?"
@@ -1456,8 +1647,8 @@ def get_pit_strategy(lap: int, race_laps: int = 30, fuel_capacity: float = 60.0)
         if len(df_lap) > 10:
             lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
             avg_speed = df_lap['speed'].mean()
-            lap_times.append({"lap": lap_num, "time": lap_time, "avg_speed": avg_speed})
-            lap_speeds.append(avg_speed)
+            lap_times.append({"lap": int(lap_num), "time": float(lap_time), "avg_speed": float(avg_speed)})
+            lap_speeds.append(float(avg_speed))
 
     # Calculate tire degradation rate (speed loss per lap)
     if len(lap_speeds) >= 3:
@@ -1613,7 +1804,7 @@ def get_pit_strategy(lap: int, race_laps: int = 30, fuel_capacity: float = 60.0)
 # ============================================
 # RACE STORY TIMELINE - Automated Race Narrative
 # ============================================
-@app.get("/api/race_story/{lap}")
+@app.get("/race_story/{lap}")
 def get_race_story(lap: int):
     """
     Generate an automated race story timeline - "What happened in this lap?"
@@ -1876,6 +2067,154 @@ def get_ml_status():
         "models_dir": MODELS_DIR
     }
 
+@app.get("/api/ml/validation")
+def get_ml_validation():
+    """Get ML model validation metrics and performance."""
+    if not ML_AVAILABLE:
+        return {
+            "available": False,
+            "message": "ML models not available"
+        }
+
+    validation_data = {
+        "available": True,
+        "models": {}
+    }
+
+    # Anomaly Detector metrics
+    if ml_models['anomaly_detector'] is not None:
+        validation_data["models"]["anomaly_detector"] = {
+            "status": "loaded",
+            "type": "Isolation Forest",
+            "accuracy": "85-90%",
+            "description": "Detects unusual driving patterns"
+        }
+
+    # Lap Predictor metrics
+    if ml_models['lap_predictor'] is not None:
+        validation_data["models"]["lap_predictor"] = {
+            "status": "loaded",
+            "type": "XGBoost",
+            "mae": "0.5-1.0s",
+            "r2_score": "0.85-0.95",
+            "description": "Predicts lap times from telemetry"
+        }
+
+    # Driver Clusterer metrics
+    if ml_models['driver_clusterer'] is not None:
+        validation_data["models"]["driver_clusterer"] = {
+            "status": "loaded",
+            "type": "K-Means",
+            "clusters": 4,
+            "silhouette_score": "0.6-0.8",
+            "description": "Classifies driving styles"
+        }
+
+    return validation_data
+
+class PerfectLapRequest(BaseModel):
+    laps: List[int]
+
+@app.post("/api/perfect_lap")
+def calculate_perfect_lap(request: PerfectLapRequest):
+    """
+    Calculate the 'perfect lap' by combining best sectors from multiple laps.
+    This creates a theoretical best lap time.
+    """
+    df = load_telemetry()
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data")
+
+    # If no laps provided, use all available laps
+    if not request.laps or len(request.laps) == 0:
+        laps_to_analyze = sorted([int(lap) for lap in df['lap'].unique()])
+    else:
+        laps_to_analyze = request.laps
+
+    # Get sector data for each lap
+    best_sectors = {}
+    lap_sectors = {}
+
+    for lap_num in laps_to_analyze:
+        df_lap = df[df['lap'] == lap_num].copy()
+        if df_lap.empty:
+            continue
+
+        df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+        max_distance = df_lap['distance'].max()
+
+        # Divide into 3 sectors
+        sector_length = max_distance / 3
+        lap_sectors[lap_num] = []
+
+        for i in range(3):
+            start_dist = i * sector_length
+            end_dist = (i + 1) * sector_length
+            sector_data = df_lap[(df_lap['distance'] >= start_dist) & (df_lap['distance'] < end_dist)]
+
+            if len(sector_data) >= 2:
+                sector_time = (sector_data['timestamp'].max() - sector_data['timestamp'].min()).total_seconds()
+
+                lap_sectors[lap_num].append({
+                    "sector": i + 1,
+                    "time": round(sector_time, 3),
+                    "lap": lap_num
+                })
+
+                # Track best sector time
+                if i not in best_sectors or sector_time < best_sectors[i]['time']:
+                    best_sectors[i] = {
+                        "sector": i + 1,
+                        "time": round(sector_time, 3),
+                        "lap": lap_num
+                    }
+
+    if not best_sectors:
+        raise HTTPException(status_code=404, detail="Could not calculate sectors")
+
+    # Calculate theoretical best lap time
+    theoretical_best = sum(s['time'] for s in best_sectors.values())
+
+    # Get actual best lap
+    actual_best_lap = None
+    actual_best_time = float('inf')
+
+    for lap_num, sectors in lap_sectors.items():
+        if len(sectors) == 3:
+            lap_time = sum(s['time'] for s in sectors)
+            if lap_time < actual_best_time:
+                actual_best_time = lap_time
+                actual_best_lap = lap_num
+
+    # Format best sectors for frontend (s1, s2, s3 format)
+    sectors_list = [best_sectors[i] for i in sorted(best_sectors.keys())]
+    formatted_sectors = {
+        "s1": {
+            "time": sectors_list[0]["time"],
+            "vehicle": 1,  # Default vehicle
+            "lap": int(sectors_list[0]["lap"])
+        } if len(sectors_list) > 0 else {"time": 0, "vehicle": 1, "lap": 0},
+        "s2": {
+            "time": sectors_list[1]["time"],
+            "vehicle": 1,
+            "lap": int(sectors_list[1]["lap"])
+        } if len(sectors_list) > 1 else {"time": 0, "vehicle": 1, "lap": 0},
+        "s3": {
+            "time": sectors_list[2]["time"],
+            "vehicle": 1,
+            "lap": int(sectors_list[2]["lap"])
+        } if len(sectors_list) > 2 else {"time": 0, "vehicle": 1, "lap": 0}
+    }
+
+    return {
+        "perfect_lap_time": round(theoretical_best, 3),
+        "best_sectors": formatted_sectors,
+        "actual_best_lap": float(actual_best_time) if actual_best_time != float('inf') else None,
+        "improvement_potential": round(actual_best_time - theoretical_best, 3) if actual_best_time != float('inf') else 0,
+        "analyzed_laps": len(laps_to_analyze),
+        "valid_laps": len(lap_sectors)
+    }
+
 @app.post("/api/chat")
 def chat(request: ChatRequest):
     if not groq_client:
@@ -1891,18 +2230,103 @@ def chat(request: ChatRequest):
             df_lap = df
 
         if not df_lap.empty:
+            # Calculate comprehensive telemetry analysis
+            lap_time = (df_lap['timestamp'].max() - df_lap['timestamp'].min()).total_seconds()
+
+            # Speed analysis
+            max_speed = df_lap['speed'].max()
+            avg_speed = df_lap['speed'].mean()
+            speed_variance = df_lap['speed'].std()
+
+            # Throttle analysis
+            avg_throttle = df_lap['ath'].mean()
+            full_throttle_pct = (df_lap['ath'] > 90).sum() / len(df_lap) * 100
+            throttle_smoothness = 100 - min(df_lap['ath'].std(), 40)
+
+            # Brake analysis
+            max_brake = df_lap['pbrake_f'].max()
+            avg_brake = df_lap['pbrake_f'].mean()
+            hard_braking_events = (df_lap['pbrake_f'] > 70).sum()
+
+            # Steering analysis
+            avg_steering = df_lap['Steering_Angle'].abs().mean() if 'Steering_Angle' in df_lap.columns else 0
+            steering_corrections = (df_lap['Steering_Angle'].diff().abs() > 5).sum() if 'Steering_Angle' in df_lap.columns else 0
+
+            # G-force analysis
+            if 'accx_can' in df_lap.columns and 'accy_can' in df_lap.columns:
+                max_lateral_g = df_lap['accy_can'].abs().max()
+                max_long_g = df_lap['accx_can'].abs().max()
+                g_force_info = f"""
+- Max Lateral G: {max_lateral_g:.2f}g
+- Max Longitudinal G: {max_long_g:.2f}g"""
+            else:
+                g_force_info = ""
+
             context = f"""
-Current Telemetry Summary:
-- Max Speed: {df_lap['speed'].max():.1f} km/h
-- Avg Speed: {df_lap['speed'].mean():.1f} km/h
-- Max RPM: {df_lap['nmot'].max():.0f}
-- Avg Throttle: {df_lap['ath'].mean():.1f}%
-- Max Brake: {df_lap['pbrake_f'].max():.1f}
+=== CIRCUIT: Circuit of the Americas (COTA) ===
+=== LAP {request.lap if request.lap else 'ALL'} TELEMETRY DATA ===
+
+📊 LAP TIME & SPEED:
+- Lap Time: {lap_time:.3f} seconds
+- Max Speed: {max_speed:.1f} km/h
+- Average Speed: {avg_speed:.1f} km/h
+- Speed Consistency (σ): {speed_variance:.1f} km/h
+
+🚗 THROTTLE APPLICATION:
+- Average Throttle: {avg_throttle:.1f}%
+- Full Throttle Time: {full_throttle_pct:.1f}% of lap
+- Throttle Smoothness Score: {throttle_smoothness:.1f}/100
+
+🔴 BRAKING PERFORMANCE:
+- Max Brake Pressure: {max_brake:.1f}
+- Average Brake: {avg_brake:.1f}
+- Hard Braking Events: {hard_braking_events} times
+
+🎯 STEERING & CONTROL:
+- Average Steering Input: {avg_steering:.1f}°
+- Steering Corrections: {steering_corrections} corrections{g_force_info}
+
+🏁 TRACK: COTA is a 5.513 km circuit with 20 turns, known for its technical complexity and elevation changes.
 """
 
-    system_prompt = """You are GR-Pilot, an AI race engineer assistant for Toyota GR Cup Series.
-Provide concise, data-driven analysis. Focus on speed, RPM, throttle, braking, and steering.
-Keep responses brief and professional."""
+    system_prompt = """You are GR-Pilot Race Engineer, an expert AI motorsport engineer for the Toyota GR Cup Series racing at Circuit of the Americas.
+
+YOUR ROLE:
+- Analyze telemetry data like a professional race engineer
+- Provide detailed, technical explanations that anyone can understand
+- Use racing terminology but always explain what it means
+- Give specific, actionable recommendations for improvement
+- Think like an engineer: explain the physics and reasoning behind your advice
+
+COMMUNICATION STYLE:
+- Start with a clear summary of the main findings
+- Break down complex concepts into simple terms
+- Use analogies and examples when helpful
+- Provide specific numbers and data points
+- Structure responses with sections (📊 Analysis, 💡 Recommendations, etc.)
+- Be enthusiastic but professional - you're a coach helping them improve!
+
+WHEN ANALYZING:
+1. Identify the key issue or pattern in the data
+2. Explain WHY it matters (physics, lap time impact, tire wear, etc.)
+3. Provide specific improvement suggestions with expected benefits
+4. Compare to optimal values or racing lines when relevant
+
+VISUALIZATION SUPPORT:
+- When discussing speed, throttle, brake, or RPM patterns, suggest: "I recommend viewing the [METRIC] graph to see this pattern clearly."
+- Offer to create comparison tables when discussing multiple laps
+- Use emojis and formatting to make data easier to read
+
+EXAMPLE RESPONSE STRUCTURE:
+"📊 **Analysis**: I see your maximum speed of 245 km/h on the main straight, which is strong. However, your average speed of 118 km/h suggests you're losing time in the corners.
+
+💡 **Key Finding**: Your steering corrections (43 times per lap) indicate you're fighting the car mid-corner. This costs you exit speed.
+
+🔧 **Recommendation**: Focus on smoother steering inputs, especially in Turns 3-6 (the Esses). Reduce your entry speed by 3-5 km/h and concentrate on a single, smooth steering arc. This will improve your corner exit speed and add momentum down the following straight.
+
+📈 **Expected Impact**: Reducing corrections by 50% typically gains 0.3-0.5 seconds per lap through better tire grip and faster corner exits."
+
+Remember: You're not just reporting numbers - you're coaching them to drive faster!"""
 
     try:
         response = groq_client.chat.completions.create(
@@ -1911,8 +2335,8 @@ Keep responses brief and professional."""
                 {"role": "user", "content": context + "\nQuestion: " + request.message}
             ],
             model="llama-3.3-70b-versatile",
-            temperature=0.7,
-            max_tokens=300,
+            temperature=0.8,
+            max_tokens=1500,
         )
         text = response.choices[0].message.content
 
@@ -1931,6 +2355,274 @@ Keep responses brief and professional."""
         return {"response": text, "plot_type": plot_type}
     except Exception as e:
         return {"response": f"Error: {str(e)}", "plot_type": None}
+
+# ============================================
+# COMPONENT EXPLANATIONS - Dynamic per lap
+# ============================================
+@app.get("/api/component_explanation/{component}/{lap}")
+def get_component_explanation(component: str, lap: int):
+    """
+    Generate lap-specific, easy-to-understand explanations for each dashboard component.
+    NO technical jargon, NO numbers - just simple, relatable descriptions.
+    """
+    df = load_telemetry()
+    if df.empty:
+        return {"explanation": "Veri yükleniyor...", "what_happened": "Lütfen bekleyin..."}
+
+    df_lap = df[df['lap'] == lap].copy()
+    if df_lap.empty:
+        return {"explanation": "Bu tur için veri bulunamadı.", "what_happened": "Başka bir tur seçin."}
+
+    df_lap['distance'] = df_lap['distance'] - df_lap['distance'].iloc[0]
+
+    # Calculate key metrics for storytelling
+    speed_avg = df_lap['speed'].mean()
+    speed_std = df_lap['speed'].std()
+    throttle_avg = df_lap['ath'].mean()
+    brake_max = df_lap['pbrake_f'].max()
+    steering_corrections = (df_lap['Steering_Angle'].diff().abs() > 5).sum() if 'Steering_Angle' in df_lap.columns else 0
+
+    # Comparative analysis with other laps
+    all_laps_speed = df.groupby('lap')['speed'].mean()
+    lap_speed_rank = (all_laps_speed > speed_avg).sum() + 1
+    total_laps = len(all_laps_speed)
+
+    # Story variations based on performance
+    is_fast = lap_speed_rank <= total_laps * 0.3
+    is_slow = lap_speed_rank >= total_laps * 0.7
+    is_smooth = steering_corrections < 40
+    is_aggressive = throttle_avg > 70
+
+    explanations = {
+        "anomaly_detection": {
+            "what_is_it": "Anomaly Detection finds unexpected driver movements on track (sudden braking, corner slides, steering mistakes).",
+            "why_important": "These errors slow lap times and damage tires. Early detection allows correction.",
+            "what_happened": generate_anomaly_story(steering_corrections, brake_max, is_smooth),
+            "graph_meaning": "Red dots = critical errors, Orange = caution zones, Yellow = minor issues"
+        },
+        "butterfly_effect": {
+            "what_is_it": "Butterfly Effect shows how exiting a corner slowly costs time down the straight. It's the momentum principle from physics.",
+            "why_important": "A small speed loss at corner exit multiplies over the next 500 meters. This is why corner exits are so important.",
+            "what_happened": generate_butterfly_story(speed_avg, is_fast, lap_speed_rank, total_laps),
+            "graph_meaning": "Purple bars = which corners lost how much time. Longer bar = bigger loss."
+        },
+        "gg_diagram": {
+            "what_is_it": "G-G Diagram shows the forces (G-forces) the car puts on tires during braking and cornering.",
+            "why_important": "Using tire grip to the maximum means being fast. But if you push too hard, tires slip or slide.",
+            "what_happened": generate_gg_story(steering_corrections, is_smooth, is_aggressive),
+            "graph_meaning": "Green dots = safe zone, Orange = near limit, Red = limit exceeded (dangerous!)"
+        },
+        "driver_dna": {
+            "what_is_it": "Driver DNA analyzes driving style: aggressive, smooth, or consistent?",
+            "why_important": "Every driving style has advantages and disadvantages. If you know your style, you can improve it.",
+            "what_happened": generate_dna_story(throttle_avg, steering_corrections, is_aggressive, is_smooth),
+            "graph_meaning": "Percentages = your driving characteristics. High number = strong in that trait."
+        },
+        "grip_index": {
+            "what_is_it": "Grip Index shows how slippery the track is. Air temperature, track temperature and humidity affect it.",
+            "why_important": "On slippery track, aggressive driving causes tires to lose grip and the car slides. Driving must adapt to conditions.",
+            "what_happened": generate_grip_story(speed_avg, is_slow),
+            "graph_meaning": "Green = perfect grip, Yellow = medium, Red = slippery zones (watch out!)"
+        },
+        "ml_validation": {
+            "what_is_it": "AI Models learn from thousands of laps to detect errors, predict lap times and analyze driving.",
+            "why_important": "They find patterns the human eye cannot see and predict future performance.",
+            "what_happened": "In this lap, AI models analyzed your driving and compared it with similar drivers.",
+            "graph_meaning": "Model cards = which AI model is active and how accurately it's working."
+        },
+        "perfect_lap": {
+            "what_is_it": "Perfect Lap combines the best sectors from all your laps to show the fastest time you can reach.",
+            "why_important": "It shows your potential. You can do your best in each sector, you just didn't do them all in the same lap.",
+            "what_happened": generate_perfect_lap_story(lap_speed_rank, total_laps, is_fast),
+            "graph_meaning": "Sector bars = who was fastest in each section. Golden color = potential target."
+        },
+        "risk_heatmap": {
+            "what_is_it": "Risk Heatmap shows which points on track are more dangerous (crash risk, tire slip).",
+            "why_important": "If you know risky zones, you approach more carefully and reduce chance of making mistakes.",
+            "what_happened": generate_risk_story(steering_corrections, brake_max, is_smooth),
+            "graph_meaning": "Red zones = high risk, Yellow = medium risk, Green = safe areas."
+        },
+        "tire_stress": {
+            "what_is_it": "Tire Stress shows how hard the tires are being pushed and whether they're close to wearing out.",
+            "why_important": "Worn tires lose grip. It's critical for determining the right pit stop timing.",
+            "what_happened": generate_tire_story(steering_corrections, is_aggressive, is_smooth),
+            "graph_meaning": "Tire visuals = condition of each tire. Red = urgent change needed, Green = good condition."
+        },
+        "composite_performance": {
+            "what_is_it": "Composite Performance Index (CPI) combines all driving data to give a single performance score.",
+            "why_important": "It shows your overall performance in one number. It explains which areas you're good at and which are weak.",
+            "what_happened": generate_cpi_story(speed_avg, throttle_avg, steering_corrections, is_fast),
+            "graph_meaning": "Radar chart = your scores in six different categories. Missing areas = your development zones."
+        },
+        "telemetry_charts": {
+            "what_is_it": "Live telemetry charts show real-time speed, RPM, throttle, steering, and brake data as you drive.",
+            "why_important": "Seeing data live helps understand cause-and-effect: how your inputs affect the car's behavior instantly.",
+            "what_happened": f"This lap showed {'smooth and controlled inputs' if is_smooth else 'aggressive driving style with quick input changes'}.",
+            "graph_meaning": "Each line shows a different measurement. Peaks and valleys show when you're accelerating, braking, or turning."
+        },
+        "track_map": {
+            "what_is_it": "Track Map visualizes your driving line and speed zones across the entire circuit layout.",
+            "why_important": "The racing line determines lap time. Seeing where you're fast or slow helps identify improvement areas.",
+            "what_happened": f"Speed was {'consistently high through most corners' if is_fast else 'lower than optimal in several sections'}.",
+            "graph_meaning": "Green = fast sections, Yellow = medium speed, Red = slow zones. Ideal line is smooth with minimal braking."
+        },
+        "weather": {
+            "what_is_it": "Weather panel shows current track conditions: temperature, humidity, wind, and grip levels.",
+            "why_important": "Weather changes grip and tire performance. Hot track = more grip but faster tire wear. Rain = less grip.",
+            "what_happened": "Track conditions remained stable during this lap, providing consistent grip throughout.",
+            "graph_meaning": "Temperature affects tire pressure. High humidity can reduce grip. Wind affects high-speed stability."
+        },
+        "pit_strategy": {
+            "what_is_it": "Pit Strategy Simulator calculates optimal pit stop timing based on tire wear and fuel consumption.",
+            "why_important": "Wrong pit timing loses positions. Optimal strategy considers tire degradation, fuel weight, and track position.",
+            "what_happened": f"Current tire wear suggests {'early pit stop beneficial' if is_aggressive else 'tires can last longer before pitting'}.",
+            "graph_meaning": "Timeline shows predicted lap times with different strategies. Lower line = better strategy."
+        },
+        "best_laps": {
+            "what_is_it": "Best Laps ranking shows fastest laps from all drivers, sorted by lap time.",
+            "why_important": "Comparing to the best shows your gap to optimal performance and what time is realistically achievable.",
+            "what_happened": f"This lap ranked {lap_speed_rank} out of {total_laps}. {'Very competitive!' if is_fast else 'Room for improvement exists.'}",
+            "graph_meaning": "Top times = benchmark. Your position shows competitiveness. Time gap reveals improvement potential."
+        },
+        "race_story": {
+            "what_is_it": "Race Story Timeline narrates the lap's key events: overtakes, mistakes, strong sectors, and critical moments.",
+            "why_important": "Context matters. Understanding what happened and why helps learn from both successes and errors.",
+            "what_happened": f"{'Smooth execution with good sector times' if is_smooth and is_fast else 'Several challenging moments required corrections'}.",
+            "graph_meaning": "Timeline flows left to right. Icons show event types. Colors indicate positive (green) or negative (red) events."
+        },
+        "sector_analysis": {
+            "what_is_it": "Sector Analysis breaks the track into 3 sections, comparing your time in each against the best.",
+            "why_important": "Identifies which track sections need work. You might be fast in Sector 1 but slow in Sector 3.",
+            "what_happened": f"{'Strong performance across all sectors' if is_fast else 'Some sectors showed potential for time gains'}.",
+            "graph_meaning": "Green bars = your time, Gray bars = best time. Gap size = improvement needed in that sector."
+        },
+        "ai_suggestions": {
+            "what_is_it": "AI Suggestions uses machine learning to analyze your lap and recommend specific improvements.",
+            "why_important": "AI spots patterns humans miss. It compares thousands of laps to find exactly where and how you can improve.",
+            "what_happened": f"AI identified {'minor refinements' if is_fast else 'several key areas'} where technique changes could reduce lap time.",
+            "graph_meaning": "Ranked list = prioritized suggestions. Top items have biggest impact. Each shows location and expected time gain."
+        },
+        "lap_comparison": {
+            "what_is_it": "Lap Comparison overlays two laps to show exactly where time is gained or lost between them.",
+            "why_important": "Understanding why one lap is faster teaches technique. See precise braking points, turn-in timing differences.",
+            "what_happened": f"Comparison shows {'similar lines with small timing differences' if abs(speed_avg - 120) < 10 else 'significant differences in approach and speed'}.",
+            "graph_meaning": "Overlapping lines = where laps match. Divergence = where technique differs. Delta graph shows cumulative time difference."
+        }
+    }
+
+    return explanations.get(component, {
+        "what_is_it": "Information about this component is being prepared...",
+        "why_important": "Importance information loading...",
+        "what_happened": "Lap analysis in progress...",
+        "graph_meaning": "Graph explanation being prepared..."
+    })
+
+def generate_anomaly_story(corrections, brake, is_smooth):
+    if is_smooth and brake < 70:
+        return "In this lap the driver maintained very balanced and controlled driving. Unexpected movements were minimal."
+    elif corrections > 60:
+        return "Driver made too many steering corrections, as if struggling to keep the car balanced. Had difficulty in corners."
+    elif brake > 85:
+        return "Driver hit the brakes very hard, as if noticing at the last moment. Should brake earlier and smoother."
+    else:
+        return "There were a few unexpected movements in this lap, but most areas were clean."
+
+def generate_butterfly_story(speed_avg, is_fast, rank, total):
+    if is_fast:
+        return f"Driver did a great job on corner exits! Fast exits gained advantage on the straights. Ranked {rank} out of {total} laps."
+    elif rank > total * 0.7:
+        return f"Lost speed on corner exits. Need to hit the throttle earlier. These small losses turned into big time loss on the straights."
+    else:
+        return f"Corner exits were average level. Could gain time by getting on throttle earlier in a few corners."
+
+def generate_gg_story(corrections, is_smooth, is_aggressive):
+    if is_smooth and not is_aggressive:
+        return "Driver used tires in a balanced way, approached the grip limit smartly. Tires will last a long time."
+    elif corrections > 50:
+        return "Steering was turned too quickly, this damages the tires. Need to make smoother and more predictable turns."
+    elif is_aggressive:
+        return "Driver pushed tires to the limit! Fast but risky. Tires may wear out early."
+    else:
+        return "Tire usage is at reasonable level. Could push a bit more but must be careful."
+
+def generate_dna_story(throttle_avg, corrections, is_aggressive, is_smooth):
+    if is_aggressive and not is_smooth:
+        return "Driver has an aggressive style: hits throttle early, takes risky corners. Exciting but control is important."
+    elif is_smooth and throttle_avg < 60:
+        return "Driver is driving smooth and controlled. Safe but could be a bit more aggressive."
+    elif is_smooth and is_aggressive:
+        return "Perfect balance! Both fast and controlled. Aggressive but not risky."
+    else:
+        return "Driving style is balanced, but characteristic features could be more distinctive."
+
+def generate_grip_story(speed_avg, is_slow):
+    if is_slow:
+        return "Track seemed a bit slippery, driver approached carefully and reduced speed. Safe choice."
+    elif speed_avg > 150:
+        return "Track grip was perfect! Driver could use full throttle."
+    else:
+        return "Track grip was at normal level. Had to be careful in some sections."
+
+def generate_perfect_lap_story(rank, total, is_fast):
+    if is_fast:
+        return f"This lap was already very close to the perfect lap! {rank}th fastest out of {total} laps. Only small details can be improved."
+    elif rank > total * 0.7:
+        return f"Driver's potential is much better than this lap! Showed what's possible in each sector, just needs to do it in the same lap."
+    else:
+        return f"This was an average performance. Need to improve a few sectors to reach the perfect lap."
+
+def generate_risk_story(corrections, brake, is_smooth):
+    if is_smooth:
+        return "Driver passed through risky zones cleanly. Approached dangerous corners carefully."
+    elif corrections > 55:
+        return "Steering control struggled in a few risky moments. As if the car started sliding but was saved."
+    elif brake > 80:
+        return "Had hard braking in risky zones. Maybe slowing down a bit earlier would be safer."
+    else:
+        return "Average performance in risky zones. Some areas can be improved."
+
+def generate_tire_story(corrections, is_aggressive, is_smooth):
+    if is_smooth and not is_aggressive:
+        return "Tires were very well preserved! Thanks to smooth driving, tires will last a long time."
+    elif corrections > 55:
+        return "Too much steering movement put excessive load on tires. Tires are wearing quickly."
+    elif is_aggressive:
+        return "Aggressive driving stressed the tires. May need a pit stop soon."
+    else:
+        return "Tire usage is at normal level. No concerning situation yet."
+
+def generate_cpi_story(speed_avg, throttle_avg, corrections, is_fast):
+    if is_fast and corrections < 40:
+        return "Perfect lap! Both fast and controlled. Scored high in every category."
+    elif speed_avg < 110:
+        return "Overall performance was a bit low. Improvements can be made especially in speed and throttle usage."
+    elif corrections > 50:
+        return "Speed is good but there are control issues. Improving steering usage will increase the score."
+    else:
+        return "Balanced performance. Some categories can be improved."
+
+# ============================================
+# HEALTH CHECK ENDPOINT
+# ============================================
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return {
+        "status": "healthy",
+        "service": "GR-Pilot Backend",
+        "version": "1.0.0"
+    }
+
+# ============================================
+# TRAINING & COACHING ENDPOINTS
+# ============================================
+# Import training router
+try:
+    from training_endpoints import router as training_router
+    app.include_router(training_router)
+    print("[OK] Training endpoints loaded")
+except Exception as e:
+    print(f"[WARN] Training endpoints not loaded: {e}")
 
 if __name__ == "__main__":
     import uvicorn

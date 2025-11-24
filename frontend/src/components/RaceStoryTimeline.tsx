@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { api } from '../api';
 import { Clock, AlertTriangle, CheckCircle, Info, TrendingDown, Zap } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface TimelineEvent {
   time: number;
@@ -109,9 +110,10 @@ export function RaceStoryTimeline() {
     <div className="glass rounded-xl p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Clock className="w-6 h-6 text-toyota-red" />
           <h3 className="text-lg font-semibold text-white">Race Story Timeline</h3>
+          <ComponentExplanation componentName="race_story" />
         </div>
         <div className="flex items-center gap-3">
           <div

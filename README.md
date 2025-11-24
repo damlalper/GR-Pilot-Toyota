@@ -478,6 +478,34 @@ GR-Pilot is built on **real race data** from the Toyota GR Cup Series at Circuit
 
 ---
 
+---
+
+## 🔧 Engineering Methodology: Behind the Code
+
+GR-Pilot is not just visualizing data; it's engineering logic. We applied professional motorsport principles to ensure our insights are physically accurate and strategically valuable.
+
+### 1. Spatial vs. Temporal Synchronization
+Traditional tools compare laps by **Time**, causing data misalignment when one car is faster.
+* **Our Solution:** We implemented **Spatial Indexing** using `Laptrigger_lapdist_dls` (Distance).
+* **Impact:** This ensures that when we compare Turn 1 braking points, we are comparing the exact same meter of asphalt, regardless of approach speed.
+
+### 2. The "Penalty Propagation" Algorithm
+We don't just look at corner speed; we analyze **momentum loss**.
+* **Logic:** A mistake in Corner Entry creates a deficit that propagates down the entire following straight.
+* **Implementation:** Our physics engine calculates the integral of velocity difference over distance ($\Delta v \cdot d$) to show the *true* cost of a mistake, not just the instantaneous delta.
+
+### 3. Tire Load & Grip Budgeting (G-G Diagram)
+Understanding the Toyota GR86's limit requires analyzing the Friction Circle.
+* **Logic:** We fuse `accx` (Longitudinal) and `accy` (Lateral) G-forces to calculate total tire load.
+* **Detection:** If `Steering_Angle` is high but `Lateral_G` is plateauing, our ML model flags this as **"Understeer/Scrubbing"**—a critical tire-killing behavior in endurance racing.
+
+### 4. Why Race 2 Data? (Strategic Selection)
+We specifically trained our models on **COTA Race 2** data.
+* **Rubber Evolution:** Race 2 represents a "rubbered-in" track with higher grip levels, providing a more accurate "Ultimate Benchmark" for physics limits.
+* **Driver Adaptation:** By Race 2, drivers are pushing limits rather than learning the track, making anomalies "true errors" rather than "learning noise."
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -544,5 +572,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ![Made with AI](https://img.shields.io/badge/Enhanced_with-Machine_Learning-00A67E?style=flat-square)
 
 **🏁 Unleash the Data. Engineer Victory. 🏁**
-
+> **Developer Note:** > "In motorsport, data is the voice of the car. We built GR-Pilot not to replace the engineer, but to give them a megaphone." 
+> *Developed with passion for the Toyota Gazoo Racing philosophy.*
 </div>

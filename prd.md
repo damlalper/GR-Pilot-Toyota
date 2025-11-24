@@ -96,3 +96,29 @@
 - **Trend odaklı:** Generative AI + motorsport.
 - **Kolay uygulanabilir:** Backend AI kodu, frontend temiz ve basit.
 - **Impact:** Pilot ve mühendisler için **direct decision support**.
+
+
+
+---
+
+## 9. Advanced Engineering Modules (The "Winning" Edge)
+*(Bu modüller, projeyi standart veri görselleştirmeden profesyonel yarış mühendisliği seviyesine taşır.)*
+
+### 9.1 "Butterfly Effect" Analysis (Exit Speed Propagation)
+* **Problem:** Pilotlar genellikle virajın ortasındaki hıza odaklanır, ancak asıl zaman kaybı düzlükte yaşanır.
+* **Çözüm:** Algoritma, viraj çıkış hızındaki (Exit Speed) 1 km/s'lik kaybın, takip eden düzlük boyunca kaç metre/saniye kaybına dönüştüğünü hesaplar.
+* **AI Output:** "Turn 1 çıkışında 2 km/s yavaşsın. Bu sana virajda 0.1s kaybettirdi ama sonraki düzlükte momentum eksikliğinden **0.4s daha kaybettirdi.** Toplam Ceza: 0.5s."
+
+### 9.2 Tire Stress & Friction Circle Analysis
+* **Problem:** GR Cup araçlarında lastik yönetimi kritiktir. Aşırı direksiyon açısı lastiği ısıtır ve öldürür.
+* **Mühendislik:** `Lateral G` ve `Steering Angle` verilerinin korelasyonu (Scrubbing effect).
+* **Özellik:** Pist haritası üzerinde "Lastik İşkence Bölgeleri" (High Scrub Zones) ısı haritası olarak gösterilir.
+* **Metrik:** `Tire_Abuse_Index` = $\int (Steering\_Angle \times Lateral\_G) dt$
+
+### 9.3 The "Frankenstein" Lap (Theoretical Optimal)
+* **Konsept:** Veri setindeki tüm turların "Mikro-Sektör" bazında en iyileri birleştirilerek sanal bir tur oluşturulur.
+* **Amaç:** Pilota sadece "Geçmişte ne yaptığını" değil, "Mükemmel sürseydi ne yapabileceğini" (Potential Laptime) göstermek.
+
+### 9.4 Spatial Synchronization Engine
+* **Teknik Detay:** Veriler zaman (saniye) ekseninde değil, **Mesafe (LapDistance)** ekseninde senkronize edilir.
+* **Neden:** Hız farklarından dolayı oluşan zaman kaymalarını (Time Skew) yok eder ve milimetrik karşılaştırma sağlar.

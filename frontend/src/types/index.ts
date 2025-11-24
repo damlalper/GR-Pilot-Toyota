@@ -11,6 +11,9 @@ export interface TelemetryPoint {
   lat: number;
   lon: number;
   timestamp: string;
+  accx_can?: number;
+  accy_can?: number;
+  ngear?: number;
 }
 
 export interface LapData {

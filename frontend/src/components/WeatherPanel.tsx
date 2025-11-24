@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchWeather } from '../api';
 import { Cloud, Thermometer, Wind, Droplets, Sun } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface WeatherData {
   track_temp?: number;
@@ -71,10 +72,11 @@ export function WeatherPanel() {
           <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
             <Sun className="w-5 h-5 text-yellow-400" />
           </div>
-          <div>
+          <div className="flex items-center gap-2">
             <h3 className="font-medium text-white">Weather</h3>
-            <p className="text-xs text-gray-400">Track Conditions</p>
+            <ComponentExplanation componentName="weather" />
           </div>
+          <p className="text-xs text-gray-400 ml-2">Track Conditions</p>
         </div>
       </div>
 
@@ -88,7 +90,7 @@ export function WeatherPanel() {
               <span className="text-xs text-gray-400">Track</span>
             </div>
             <p className="text-xl font-bold text-orange-400">
-              {typeof trackTemp === 'number' ? Math.round(trackTemp) : trackTemp}°C
+              {typeof trackTemp === 'number' ? `${Math.round(trackTemp)}°C` : `${trackTemp}°C`}
             </p>
           </div>
         )}
@@ -101,7 +103,7 @@ export function WeatherPanel() {
               <span className="text-xs text-gray-400">Ambient</span>
             </div>
             <p className="text-xl font-bold text-blue-400">
-              {typeof ambientTemp === 'number' ? Math.round(ambientTemp) : ambientTemp}°C
+              {typeof ambientTemp === 'number' ? `${Math.round(ambientTemp)}°C` : `${ambientTemp}°C`}
             </p>
           </div>
         )}
@@ -114,7 +116,7 @@ export function WeatherPanel() {
               <span className="text-xs text-gray-400">Humidity</span>
             </div>
             <p className="text-xl font-bold text-cyan-400">
-              {typeof humidity === 'number' ? Math.round(humidity) : humidity}%
+              {typeof humidity === 'number' ? `${Math.round(humidity)}%` : `${humidity}%`}
             </p>
           </div>
         )}
@@ -127,7 +129,7 @@ export function WeatherPanel() {
               <span className="text-xs text-gray-400">Wind</span>
             </div>
             <p className="text-xl font-bold text-gray-300">
-              {typeof windSpeed === 'number' ? Math.round(windSpeed) : windSpeed} km/h
+              {typeof windSpeed === 'number' ? `${Math.round(windSpeed)} km/h` : `${windSpeed} km/h`}
             </p>
           </div>
         )}

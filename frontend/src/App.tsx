@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Header,
   Controls,
   Scene3D,
+  Scene3DCompare,
   TelemetryPanel,
   TelemetryCharts,
   TrackMap,
@@ -20,13 +21,32 @@ import {
   CompositePerformanceIndex,
   PitStrategy,
   RaceStoryTimeline,
+  BestLaps,
+  MLValidation,
+  ButterflyEffect,
+  GGDiagram,
+  PerfectLap,
+  Training,
 } from './components';
-import { LayoutGrid, GitCompare, BarChart3 } from 'lucide-react';
+import { Onboarding } from './components/Onboarding';
+import { LayoutGrid, GitCompare, BarChart3, Target } from 'lucide-react';
 
-type ViewMode = 'race' | 'analysis' | 'compare';
+type ViewMode = 'race' | 'analysis' | 'compare' | 'training';
 
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('race');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Always show onboarding on first load (reset on every page refresh)
+  useEffect(() => {
+    // Clear onboarding flag to show it every time
+    localStorage.removeItem('onboarding_completed');
+    setShowOnboarding(true);
+  }, []);
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -68,6 +88,17 @@ function App() {
           >
             <GitCompare className="w-4 h-4" />
             Compare
+          </button>
+          <button
+            onClick={() => setViewMode('training')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              viewMode === 'training'
+                ? 'bg-toyota-red text-white'
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+            }`}
+          >
+            <Target className="w-4 h-4" />
+            Training
           </button>
         </div>
       </div>
@@ -113,33 +144,59 @@ function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             {/* Left Column - Anomalies & Suggestions */}
             <div className="lg:col-span-8 space-y-4">
-              {/* NEW: CPI (Composite Performance Index) */}
+              {/* CPI (Composite Performance Index) */}
               <CompositePerformanceIndex />
 
+              {/* Best Laps & Perfect Lap */}
+              <div className="grid grid-cols-2 gap-4">
+                <BestLaps />
+                <PerfectLap />
+              </div>
+
+              {/* Driver DNA & Grip Index */}
               <div className="grid grid-cols-2 gap-4">
                 <DriverDNA />
                 <GripIndex />
               </div>
 
-              {/* NEW: Race Story Timeline */}
+              {/* Race Story Timeline */}
               <RaceStoryTimeline />
 
+              {/* Sector Analysis */}
               <SectorAnalysis />
+
+              {/* Anomalies & Suggestions */}
               <AnomalyOverlay />
               <SuggestionsPanel />
+
+              {/* Butterfly Effect - Advanced Analysis */}
+              <ButterflyEffect />
+
+              {/* Telemetry Charts */}
               <TelemetryCharts />
+
+              {/* GG Diagram - G-Force Analysis */}
+              <GGDiagram />
             </div>
 
             {/* Right Column */}
             <div className="lg:col-span-4 space-y-4">
               <TelemetryPanel />
 
-              {/* NEW: Pit Strategy Simulator */}
+              {/* Pit Strategy Simulator */}
               <PitStrategy />
 
+              {/* ML Validation Dashboard */}
+              <MLValidation />
+
+              {/* Risk & Tire Analysis */}
               <RiskHeatmap />
               <TireStress />
+
+              {/* Track Map */}
               <TrackMap />
+
+              {/* Report Export */}
               <ReportExport />
             </div>
           </div>
@@ -152,7 +209,7 @@ function App() {
             <div className="lg:col-span-8 space-y-4">
               <LapComparison />
               <div className="h-[400px]">
-                <Scene3D />
+                <Scene3DCompare />
               </div>
             </div>
 
@@ -164,6 +221,9 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Training View */}
+        {viewMode === 'training' && <Training />}
       </main>
 
       {/* Footer */}
@@ -181,6 +241,9 @@ function App() {
 
       {/* Floating Chat */}
       <ChatBot />
+
+      {/* Onboarding */}
+      {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
     </div>
   );
 }

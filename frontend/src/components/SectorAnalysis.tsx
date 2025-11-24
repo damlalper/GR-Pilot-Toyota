@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { fetchSectors } from '../api';
 import { Timer, Loader2, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface SectorData {
   lap: number;
@@ -67,10 +68,11 @@ export function SectorAnalysis() {
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
           <Timer className="w-5 h-5 text-white" />
         </div>
-        <div>
+        <div className="flex items-center gap-2">
           <h3 className="font-medium text-white">Sector Analysis</h3>
-          <p className="text-xs text-gray-400">Time gain/loss breakdown</p>
+          <ComponentExplanation componentName="sector_analysis" />
         </div>
+        <p className="text-xs text-gray-400 ml-2">Time gain/loss breakdown</p>
       </div>
 
       {/* Lap Time Summary */}

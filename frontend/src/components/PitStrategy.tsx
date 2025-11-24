@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { api } from '../api';
 import { Flag, Fuel, TrendingDown, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { ComponentExplanation } from './ComponentExplanation';
 
 interface Strategy {
   name: string;
@@ -102,9 +103,10 @@ export function PitStrategy() {
     <div className="glass rounded-xl p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Flag className="w-6 h-6 text-toyota-red" />
           <h3 className="text-lg font-semibold text-white">Pit Strategy Simulator</h3>
+          <ComponentExplanation componentName="pit_strategy" />
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-400">Lap</span>
