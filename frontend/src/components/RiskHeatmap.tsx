@@ -158,12 +158,12 @@ export function RiskHeatmap() {
       )}
 
       {/* Single Recommendation String */}
-      {data.recommendation && !data.recommendations && (
+      {data.recommendations && data.recommendations.length === 1 && (
         <div className="border-t border-white/10 pt-3">
           <p className="text-xs text-gray-400 mb-2">Safety Tip</p>
           <p className="text-xs text-gray-300 flex items-start gap-1">
             <span className="text-orange-400">!</span>
-            {data.recommendation}
+            {data.recommendations[0]}
           </p>
         </div>
       )}

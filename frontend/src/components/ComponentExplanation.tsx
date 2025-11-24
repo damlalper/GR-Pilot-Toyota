@@ -20,7 +20,7 @@ export function ComponentExplanation({ componentName, className = '' }: Componen
   const [isOpen, setIsOpen] = useState(false);
   const [data, setData] = useState<ExplanationData | null>(null);
   const [loading, setLoading] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<number | null>(null);
 
   const loadExplanation = async () => {
     if (!currentLap || data) return; // Only load once
